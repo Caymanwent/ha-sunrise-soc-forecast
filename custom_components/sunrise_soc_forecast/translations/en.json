@@ -1,0 +1,120 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Main Battery",
+        "description": "Configure your main battery system. The power sensor is used to track house load consumption automatically.",
+        "data": {
+          "main_soc_entity": "Battery State of Charge sensor (%)",
+          "main_power_entity": "House load power sensor (W)",
+          "main_capacity": "Battery capacity (kWh)",
+          "main_floor": "Minimum discharge floor (%)",
+          "grid_power_entity": "Grid import power sensor (W) — optional"
+        }
+      },
+      "backup": {
+        "title": "Backup Battery",
+        "description": "Do you have a backup battery that assists overnight (e.g., Powerwall, secondary inverter)?",
+        "data": {
+          "backup_enabled": "Enable backup battery"
+        }
+      },
+      "backup_details": {
+        "title": "Backup Battery Details",
+        "description": "Configure your backup battery. It discharges at a fixed rate starting at the activation hour to assist the main battery overnight.",
+        "data": {
+          "backup_soc_entity": "Backup battery SoC sensor (%)",
+          "backup_discharge_entity": "Backup discharge power sensor (kW)",
+          "backup_capacity": "Backup capacity (kWh)",
+          "backup_floor": "Minimum discharge floor (%)",
+          "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
+          "backup_activation_hour": "Hour backup starts discharging (0-6, e.g., 2 = 2am)",
+          "backup_mode": "Deployment mode"
+        }
+      },
+      "solcast": {
+        "title": "Solcast Forecast Entities",
+        "description": "Select your Solcast PV forecast sensors for each forecast day.",
+        "data": {
+          "solcast_remaining_today": "Remaining today",
+          "solcast_tomorrow": "Forecast tomorrow",
+          "solcast_day_3": "Forecast day 3",
+          "solcast_day_4": "Forecast day 4",
+          "solcast_day_5": "Forecast day 5",
+          "solcast_day_6": "Forecast day 6",
+          "solcast_day_7": "Forecast day 7"
+        }
+      },
+      "options": {
+        "title": "Forecast Options",
+        "description": "Set forecast range, target SoC, and fallback consumption values. Fallback values are used until 7 days of real consumption data has been collected.",
+        "data": {
+          "forecast_days": "Number of days to forecast (2-7)",
+          "target_soc": "Target sunrise SoC (%)",
+          "default_daily": "Fallback daily consumption (kWh)",
+          "default_overnight": "Fallback overnight consumption (kWh)",
+          "guard_threshold": "Minimum kWh for averages to be valid"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Main Battery",
+        "description": "Reconfigure your main battery system.",
+        "data": {
+          "main_soc_entity": "Battery State of Charge sensor (%)",
+          "main_power_entity": "House load power sensor (W)",
+          "main_capacity": "Battery capacity (kWh)",
+          "main_floor": "Minimum discharge floor (%)",
+          "grid_power_entity": "Grid import power sensor (W) — optional"
+        }
+      },
+      "backup": {
+        "title": "Backup Battery",
+        "description": "Do you have a backup battery that assists overnight?",
+        "data": {
+          "backup_enabled": "Enable backup battery"
+        }
+      },
+      "backup_details": {
+        "title": "Backup Battery Details",
+        "description": "Configure your backup battery.",
+        "data": {
+          "backup_soc_entity": "Backup battery SoC sensor (%)",
+          "backup_discharge_entity": "Backup discharge power sensor (kW)",
+          "backup_capacity": "Backup capacity (kWh)",
+          "backup_floor": "Minimum discharge floor (%)",
+          "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
+          "backup_activation_hour": "Hour backup starts discharging (0-6)",
+          "backup_mode": "Deployment mode"
+        }
+      },
+      "solcast": {
+        "title": "Solcast Forecast Entities",
+        "description": "Select your Solcast PV forecast sensors.",
+        "data": {
+          "solcast_remaining_today": "Remaining today",
+          "solcast_tomorrow": "Forecast tomorrow",
+          "solcast_day_3": "Forecast day 3",
+          "solcast_day_4": "Forecast day 4",
+          "solcast_day_5": "Forecast day 5",
+          "solcast_day_6": "Forecast day 6",
+          "solcast_day_7": "Forecast day 7"
+        }
+      },
+      "options": {
+        "title": "Forecast Options",
+        "description": "Set forecast range, target SoC, and fallback values.",
+        "data": {
+          "forecast_days": "Number of days to forecast (2-7)",
+          "target_soc": "Target sunrise SoC (%)",
+          "default_daily": "Fallback daily consumption (kWh)",
+          "default_overnight": "Fallback overnight consumption (kWh)",
+          "guard_threshold": "Minimum kWh for averages to be valid"
+        }
+      }
+    }
+  }
+}
