@@ -1,0 +1,27 @@
+type: markdown
+content: |
+  {% set days = [1,2,3,4,5,6,7] -%}
+  {% set suffix = '_2' -%}
+  {% set day1 = 'sensor.predicted_sunrise_soc_day_1' ~ suffix -%}
+  {% set avg_daily = 'sensor.7_day_average_daily_consumption' ~ suffix -%}
+  {% set avg_overnight = 'sensor.7_day_average_overnight_consumption' ~ suffix -%}
+  | Day | Status | SoC % | kWh | Solcast | Daytime | Backup | Grid Need |
+  |-----|--------|-------|-----|---------|---------|--------|-----------|
+  {%- for d in days %}
+  {%- set entity = 'sensor.predicted_sunrise_soc_day_' ~ d ~ suffix %}
+  {%- set soc = states(entity) | float(0) %}
+  {%- if soc > 0 %}
+  | {% if d == 1 %}{% if is_state('binary_sensor.is_overnight', 'on') and now().hour < 12 %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d == 1 %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}{{ state_attr(entity, 'solcast_kwh') }}{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
+  {%- endif %}
+  {%- endfor %}
+
+  {% if is_state('binary_sensor.is_overnight', 'off') -%}
+  Mode: Daytime | Remaining solar: {{ state_attr(day1, 'remaining_solar_kwh') }} kWh | Hours to sunset: {{ ((as_datetime(state_attr('sun.sun', 'next_setting')) - now()).total_seconds() / 3600) | round(1) }}h
+  {%- else -%}
+  Phase 1 (now→2am): {{ state_attr(day1, 'hours_phase1') }}h @ {{ state_attr(day1, 'avg_overnight_kw') }} kW avg | live: {{ state_attr(day1, 'live_kw') }} kW
+  Phase 2 (2am→sunrise): {{ state_attr(day1, 'hours_phase2') }}h | Backup: {{ state_attr(day1, 'sigen_available_kwh') }} kWh @ {{ state_attr(day1, 'sigen_kw') }} kW
+  {%- endif %}
+  {% if state_attr(day1, 'grid_needed_kwh') | float(0) > 0 -%}
+  Grid: {{ state_attr(day1, 'grid_used_today_kwh') }} kWh used | {{ state_attr(day1, 'grid_remaining_kwh') }} kWh remaining to target ({{ state_attr(day1, 'target_soc') }}%)
+  {%- endif %}
+  *{% if state_attr(day1, 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {{ states(avg_daily) | round(1) }} kWh / overnight: {{ states(avg_overnight) | round(1) }} kWh){% endif %}*
