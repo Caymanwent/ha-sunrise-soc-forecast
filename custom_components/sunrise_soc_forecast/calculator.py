@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -69,6 +70,46 @@ class DayResult:
     daytime_consumption_kwh: float = 0.0
     backup_charged_kwh: float = 0.0
     grid_needed_kwh: float = 0.0
+
+
+def simulate_daytime(
+    start_kwh: float,
+    solar_total_kwh: float,
+    daytime_consumption_kwh: float,
+    daytime_hours: float,
+    battery_cap: float,
+    battery_floor: float,
+) -> tuple[float, float]:
+    """Simulate hour-by-hour daytime using a sine curve for solar production.
+
+    Returns (sunset_kwh, solar_surplus_kwh).
+    solar_surplus_kwh = energy clipped when battery hits cap, available for backup.
+    """
+    steps = max(1, int(round(daytime_hours)))
+    consumption_per_step = daytime_consumption_kwh / steps if steps > 0 else 0
+
+    # Generate sine-shaped solar production per step
+    # Peaks at solar noon (midpoint), zero at sunrise/sunset
+    solar_factors = [math.sin((i + 0.5) / steps * math.pi) for i in range(steps)]
+    factor_sum = sum(solar_factors)
+
+    if factor_sum > 0:
+        solar_per_step = [(f / factor_sum) * solar_total_kwh for f in solar_factors]
+    else:
+        solar_per_step = [solar_total_kwh / steps] * steps
+
+    battery = start_kwh
+    surplus = 0.0
+
+    for i in range(steps):
+        battery += solar_per_step[i] - consumption_per_step
+        if battery > battery_cap:
+            surplus += battery - battery_cap
+            battery = battery_cap
+        if battery < battery_floor:
+            battery = battery_floor
+
+    return battery, surplus
 
 
 def get_consumption(
@@ -334,16 +375,24 @@ def predict_future_day(
     overnight_params: OvernightParams,
     target_kwh: float = 0.0,
 ) -> DayResult:
-    """Predict SoC for Days 2-7."""
+    """Predict SoC for Days 2-7 using sine curve solar simulation."""
     daytime_kwh = max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)
-    net_solar = solar_kwh - daytime_kwh
+    daytime_hours = 24.0 - overnight_params.overnight_hours
+    if daytime_hours < 1:
+        daytime_hours = 12.0
 
-    # Sunset SoC
-    sunset_kwh = max(main.floor_kwh, min(main.capacity_kwh, prev_kwh + net_solar))
+    # Simulate hour-by-hour with sine curve solar production
+    sunset_kwh, solar_surplus = simulate_daytime(
+        start_kwh=prev_kwh,
+        solar_total_kwh=solar_kwh,
+        daytime_consumption_kwh=daytime_kwh,
+        daytime_hours=daytime_hours,
+        battery_cap=main.capacity_kwh,
+        battery_floor=main.floor_kwh,
+    )
 
-    # Backup charge from solar surplus
-    solar_for_backup = max(0, net_solar - (main.capacity_kwh - prev_kwh))
-    backup_charged = min(backup.usable_kwh, solar_for_backup) if backup.enabled else 0.0
+    # Backup charges from solar surplus (energy clipped when battery hit cap)
+    backup_charged = min(backup.usable_kwh, solar_surplus) if backup.enabled else 0.0
 
     sunrise_kwh = calc_overnight_drain(
         sunset_kwh=sunset_kwh,
