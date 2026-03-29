@@ -44,6 +44,8 @@ from .const import (
     CONF_FORECAST_DAYS,
     CONF_SOLCAST_REMAINING,
     CONF_GRID_POWER_ENTITY,
+    CONF_TARGET_SOC,
+    DEFAULT_TARGET_SOC,
     SOLCAST_STANDARD,
     SOLCAST_SHIFTED,
     DEFAULT_MAIN_CAPACITY,
@@ -88,7 +90,7 @@ class SunriseSocCoordinator:
         )
 
         self.num_days = config.get(CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS)
-        self.target_soc = config.get("target_soc", 20.0)
+        self.target_soc = config.get(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
 
         # Internal consumption tracking
         self._daily_history: deque[float] = deque(maxlen=7)
@@ -364,7 +366,7 @@ class SunriseSocCoordinator:
             try:
                 cb()
             except Exception:
-                pass
+                _LOGGER.debug("Error in update callback", exc_info=True)
 
     def freeze(self) -> None:
         """Freeze Days 2-7 values for overnight."""

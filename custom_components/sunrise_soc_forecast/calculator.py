@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
 
 
 @dataclass
@@ -73,8 +72,8 @@ class DayResult:
 
 
 def get_consumption(
-    daily_avg: Optional[float],
-    overnight_avg: Optional[float],
+    daily_avg: float | None,
+    overnight_avg: float | None,
     default_daily: float,
     default_overnight: float,
     guard_threshold: float,
@@ -108,7 +107,7 @@ def get_overnight_params(
     if overnight_hours <= 0:
         overnight_hours = 12.0
 
-    avg_overnight_kw = overnight_kwh / overnight_hours if overnight_hours > 0 else 2.67
+    avg_overnight_kw = overnight_kwh / overnight_hours
 
     # Phase split: sunset → activation hour, activation → sunrise
     sunset_local = sunset.astimezone()

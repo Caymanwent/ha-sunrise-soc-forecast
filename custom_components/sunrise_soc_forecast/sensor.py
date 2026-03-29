@@ -25,7 +25,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    num_days = entry.data.get(CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS)
+    config = {**entry.data, **entry.options}
+    num_days = config.get(CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS)
 
     entities = []
 
@@ -91,25 +92,20 @@ class SunriseSocSensor(SensorEntity):
 
         attrs = {
             "predicted_kwh": result.predicted_kwh,
+            "daytime_consumption_kwh": result.daytime_consumption_kwh,
+            "backup_charged_kwh": result.backup_charged_kwh,
+            "grid_needed_kwh": result.grid_needed_kwh,
+            "grid_used_today_kwh": self._coordinator.grid_energy_today,
+            "grid_remaining_kwh": round(max(0, result.grid_needed_kwh - self._coordinator.grid_energy_today), 2),
+            "target_soc": self._coordinator.target_soc,
         }
 
         if self._day == 1:
             attrs["mode"] = "nighttime" if self._coordinator.is_overnight else "daytime"
             attrs["remaining_solar_kwh"] = result.solcast_kwh if not self._coordinator.is_overnight else 0
             attrs["using_fallback"] = self._coordinator.get_consumption().using_fallback
-
-        if self._day >= 2:
+        else:
             attrs["solcast_kwh"] = result.solcast_kwh
-            attrs["daytime_consumption_kwh"] = result.daytime_consumption_kwh
-            attrs["backup_charged_kwh"] = result.backup_charged_kwh
-
-        # Common attributes
-        attrs["daytime_consumption_kwh"] = result.daytime_consumption_kwh
-        attrs["backup_charged_kwh"] = result.backup_charged_kwh
-        attrs["grid_needed_kwh"] = result.grid_needed_kwh
-        attrs["grid_used_today_kwh"] = self._coordinator.grid_energy_today
-        attrs["grid_remaining_kwh"] = round(max(0, result.grid_needed_kwh - self._coordinator.grid_energy_today), 2)
-        attrs["target_soc"] = self._coordinator.target_soc
 
         return attrs
 

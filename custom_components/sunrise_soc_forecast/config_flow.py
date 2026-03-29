@@ -242,6 +242,7 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
                     ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
                     vol.Optional(
                         CONF_GRID_POWER_ENTITY,
+                        description={"suggested_value": data.get(CONF_GRID_POWER_ENTITY)},
                     ): ENTITY_SELECTOR,
                 }
             ),
