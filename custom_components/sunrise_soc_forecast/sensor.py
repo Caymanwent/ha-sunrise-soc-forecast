@@ -96,7 +96,6 @@ class SunriseSocSensor(SensorEntity):
             "backup_charged_kwh": result.backup_charged_kwh,
             "grid_needed_kwh": result.grid_needed_kwh,
             "grid_used_today_kwh": self._coordinator.grid_energy_today,
-            "grid_remaining_kwh": round(max(0, result.grid_needed_kwh - self._coordinator.grid_energy_today), 2),
             "target_soc": self._coordinator.target_soc,
         }
 
@@ -153,7 +152,7 @@ class ConsumptionAverageSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return history."""
         if self._period == "daily":
-            history = list(self._coordinator._daily_history)
+            history = self._coordinator.daily_history
         else:
-            history = list(self._coordinator._overnight_history)
+            history = self._coordinator.overnight_history
         return {"history": history, "days": len(history)}

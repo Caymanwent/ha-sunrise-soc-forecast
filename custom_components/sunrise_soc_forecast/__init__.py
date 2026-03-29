@@ -67,8 +67,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if CONF_BACKUP_DISCHARGE_ENTITY in config:
             forecast_entities.append(config[CONF_BACKUP_DISCHARGE_ENTITY])
 
+    # Track all Solcast entities for forecast updates
+    from .const import SOLCAST_STANDARD
+    for conf_key in SOLCAST_STANDARD.values():
+        entity = config.get(conf_key, "")
+        if entity:
+            forecast_entities.append(entity)
     solcast_remaining = config.get(CONF_SOLCAST_REMAINING, "")
-    if solcast_remaining:
+    if solcast_remaining and solcast_remaining not in forecast_entities:
         forecast_entities.append(solcast_remaining)
 
     @callback

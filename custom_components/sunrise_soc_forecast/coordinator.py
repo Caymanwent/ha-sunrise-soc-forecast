@@ -116,6 +116,8 @@ class SunriseSocCoordinator:
         self._update_callbacks: set = set()
 
         # Persistent storage
+        # Store(hass, 1, ...) = HA storage framework schema version
+        # STORAGE_VERSION in const.py = app-level version for invalidating stale frozen data
         self._store = Store(hass, 1, f"sunrise_soc_forecast_{entry_id}")
 
         # Astral cache (fix #4)
@@ -396,6 +398,16 @@ class SunriseSocCoordinator:
         if not self._overnight_history:
             return None
         return round(sum(self._overnight_history) / len(self._overnight_history), 2)
+
+    @property
+    def daily_history(self) -> list[float]:
+        """Get daily consumption history."""
+        return list(self._daily_history)
+
+    @property
+    def overnight_history(self) -> list[float]:
+        """Get overnight consumption history."""
+        return list(self._overnight_history)
 
     @property
     def daily_energy_today(self) -> float:

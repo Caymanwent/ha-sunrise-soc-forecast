@@ -269,6 +269,9 @@ def predict_day1_daytime(
 
 
 def predict_day1_nighttime(
+    # Note: backup_mode is intentionally not applied here.
+    # At night, we use live sensor readings (actual SoC + actual backup state)
+    # rather than the target-based logic which is for future day planning.
     current_kwh: float,
     backup_available_kwh: float,
     backup_kw: float,

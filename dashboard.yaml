@@ -17,6 +17,6 @@ content: |
   Mode: Nighttime
   {%- endif %}
   {% if state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_needed_kwh') | float(0) > 0 -%}
-  Grid: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_used_today_kwh') }} kWh used | {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_remaining_kwh') }} kWh remaining to target ({{ state_attr('sensor.predicted_sunrise_soc_day_1', 'target_soc') }}%)
+  Grid needed: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_needed_kwh') }} kWh to target ({{ state_attr('sensor.predicted_sunrise_soc_day_1', 'target_soc') }}%) | Used today: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_used_today_kwh') }} kWh
   {%- endif %}
   *{% if state_attr('sensor.predicted_sunrise_soc_day_1', 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {{ states('sensor.7_day_average_daily_consumption') | round(1) }} kWh / overnight: {{ states('sensor.7_day_average_overnight_consumption') | round(1) }} kWh){% endif %}*

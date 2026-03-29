@@ -156,7 +156,6 @@ After setup, the integration creates these sensors:
 | `backup_charged_kwh` | Backup battery charge available for that night (kWh) |
 | `grid_needed_kwh` | Grid import needed to reach target SoC (kWh) |
 | `grid_used_today_kwh` | Grid import accumulated today (kWh) — Day 1 only |
-| `grid_remaining_kwh` | Additional grid import still needed today (kWh) — Day 1 only |
 | `target_soc` | Configured target SoC (%) |
 
 ### Day 1 Additional Attributes
@@ -171,15 +170,14 @@ After setup, the integration creates these sensors:
 
 Each day's sensor shows `grid_needed_kwh` — how much grid import would be needed for the main battery to reach the target SoC at sunrise. This lets you plan ahead:
 
-- **Day 1**: Shows today's grid need. If you have a grid power sensor configured, `grid_used_today_kwh` tracks actual imports and `grid_remaining_kwh` shows how much more is needed.
 - **Days 2-7**: Shows the forecasted grid need based on predicted SoC. Use this to plan which nights to schedule grid charging.
 
 ```
 grid_needed     = (target_soc% × capacity) - predicted_sunrise_kwh
-grid_remaining  = grid_needed - grid_used_today   (Day 1 only)
+
 ```
 
-These values update live. As grid import charges the battery, the SoC prediction improves, `grid_needed` drops, and `grid_remaining` decreases toward zero.
+`grid_needed_kwh` updates live. As grid import charges the battery, the SoC prediction improves and `grid_needed` drops toward zero.
 
 ## Backup Battery Behavior
 
@@ -251,7 +249,6 @@ automation:
     condition:
       - condition: numeric_state
         entity_id: sensor.predicted_sunrise_soc_day_1
-        attribute: grid_remaining_kwh
         above: 0
     action:
       - action: switch.turn_on

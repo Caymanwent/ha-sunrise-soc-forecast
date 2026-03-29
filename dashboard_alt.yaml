@@ -22,6 +22,6 @@ content: |
   Phase 2 (2am→sunrise): {{ state_attr(day1, 'hours_phase2') }}h | Backup: {{ state_attr(day1, 'sigen_available_kwh') }} kWh @ {{ state_attr(day1, 'sigen_kw') }} kW
   {%- endif %}
   {% if state_attr(day1, 'grid_needed_kwh') | float(0) > 0 -%}
-  Grid: {{ state_attr(day1, 'grid_used_today_kwh') }} kWh used | {{ state_attr(day1, 'grid_remaining_kwh') }} kWh remaining to target ({{ state_attr(day1, 'target_soc') }}%)
+  Grid needed: {{ state_attr(day1, 'grid_needed_kwh') }} kWh to target ({{ state_attr(day1, 'target_soc') }}%) | Used today: {{ state_attr(day1, 'grid_used_today_kwh') }} kWh
   {%- endif %}
   *{% if state_attr(day1, 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {{ states(avg_daily) | round(1) }} kWh / overnight: {{ states(avg_overnight) | round(1) }} kWh){% endif %}*
