@@ -92,7 +92,13 @@ class SunriseSocCoordinator:
         self.num_days = config.get(CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS)
         self.target_soc = config.get(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
 
-        # Internal consumption tracking
+        # Internal consumption tracking — 24 hourly buckets
+        # Each hour has a 7-day rolling average
+        self._hourly_history: list[deque[float]] = [deque(maxlen=7) for _ in range(24)]
+        self._hourly_energy_kwh: list[float] = [0.0] * 24
+        self._current_hour: int | None = None
+
+        # Legacy daily/overnight totals (derived from hourly for backward compatibility)
         self._daily_history: deque[float] = deque(maxlen=7)
         self._overnight_history: deque[float] = deque(maxlen=7)
 
@@ -162,9 +168,24 @@ class SunriseSocCoordinator:
     def accumulate_energy(self) -> None:
         """Accumulate energy from the house load power sensor."""
         now = dt_util.now()
+        current_hour = now.hour
         power_w = self.get_state_float(self.config[CONF_MAIN_POWER_ENTITY])
         power_kw = power_w / 1000.0
         overnight = self.is_overnight
+
+        # Initialize current hour on first call
+        if self._current_hour is None:
+            self._current_hour = current_hour
+
+        # Detect hour change — record the completed hour
+        if current_hour != self._current_hour:
+            prev_hour = self._current_hour
+            if self._hourly_energy_kwh[prev_hour] > 0:
+                self._hourly_history[prev_hour].append(
+                    round(self._hourly_energy_kwh[prev_hour], 3)
+                )
+            self._hourly_energy_kwh[prev_hour] = 0.0
+            self._current_hour = current_hour
 
         if self._last_power_reading is not None and self._last_power_time is not None:
             elapsed_hours = (now - self._last_power_time).total_seconds() / 3600
@@ -172,6 +193,7 @@ class SunriseSocCoordinator:
                 avg_kw = (self._last_power_reading + power_kw) / 2
                 energy_kwh = avg_kw * elapsed_hours
                 self._daily_energy_kwh += energy_kwh
+                self._hourly_energy_kwh[current_hour] += energy_kwh
                 if overnight:
                     self._overnight_energy_kwh += energy_kwh
 
@@ -254,6 +276,57 @@ class SunriseSocCoordinator:
             guard_threshold=self.config.get(CONF_GUARD_THRESHOLD, DEFAULT_GUARD_THRESHOLD),
         )
 
+    def get_hourly_averages(self) -> list[float]:
+        """Get 24-hour consumption averages (kWh per hour).
+
+        Returns a list of 24 floats, one per hour (0=midnight, 23=11pm).
+        Hours without data use a flat fallback derived from daily/overnight averages.
+        """
+        consumption = self.get_consumption()
+        overnight_hours = 12.0  # approximate
+        sunrise, sunset = self._get_astral()
+        if sunrise is not None and sunset is not None:
+            overnight_hours = abs((sunrise - sunset).total_seconds() / 3600)
+            if overnight_hours <= 0:
+                overnight_hours = 12.0
+        daytime_hours = 24.0 - overnight_hours
+
+        # Flat fallback rates
+        overnight_rate = consumption.avg_overnight_kwh / overnight_hours if overnight_hours > 0 else 2.67
+        daytime_rate = (consumption.avg_daily_kwh - consumption.avg_overnight_kwh) / daytime_hours if daytime_hours > 0 else 5.0
+        if daytime_rate < 0:
+            daytime_rate = 0.0
+
+        # Determine which hours are daytime vs overnight using actual astral data
+        sunset_h = 18
+        sunrise_h = 6
+        if sunset is not None:
+            sl = sunset.astimezone()
+            sunset_h = sl.hour
+        if sunrise is not None:
+            rl = sunrise.astimezone()
+            sunrise_h = rl.hour
+
+        averages = []
+        for h in range(24):
+            if self._hourly_history[h]:
+                # Use real data
+                averages.append(
+                    round(sum(self._hourly_history[h]) / len(self._hourly_history[h]), 3)
+                )
+            else:
+                # Fallback: flat rate based on whether this hour is overnight
+                # Overnight = sunset_h to sunrise_h (wrapping through midnight)
+                if sunset_h > sunrise_h:
+                    # Normal case: sunset 18, sunrise 6 → night = 18-23, 0-5
+                    is_night = h >= sunset_h or h < sunrise_h
+                else:
+                    # Unusual case: sunset < sunrise (polar regions)
+                    is_night = sunset_h <= h < sunrise_h
+                averages.append(round(overnight_rate if is_night else daytime_rate, 3))
+
+        return averages
+
     def get_solcast_kwh(self, day: int) -> float:
         """Get Solcast forecast for a day, handling post-midnight shift."""
         now = dt_util.now()
@@ -279,6 +352,13 @@ class SunriseSocCoordinator:
         overnight = self.is_overnight
         target_kwh = self.target_soc / 100 * self.main.capacity_kwh
         consumption = self.get_consumption()
+        hourly_avg = self.get_hourly_averages()
+
+        # Get sunrise/sunset hours for hourly model
+        sunrise_local = sunrise.astimezone()
+        sunset_local = sunset.astimezone()
+        sunrise_hour = sunrise_local.hour + sunrise_local.minute / 60
+        sunset_hour = sunset_local.hour + sunset_local.minute / 60
 
         overnight_params = get_overnight_params(
             sunrise=sunrise,
@@ -354,6 +434,9 @@ class SunriseSocCoordinator:
                     backup=self.backup,
                     overnight_params=overnight_params,
                     target_kwh=target_kwh,
+                    hourly_consumption=hourly_avg,
+                    sunrise_hour=sunrise_hour,
+                    sunset_hour=sunset_hour,
                 )
 
         # Calculate grid needed for each day
@@ -431,6 +514,8 @@ class SunriseSocCoordinator:
                 "storage_version": STORAGE_VERSION,
                 "daily_history": list(self._daily_history),
                 "overnight_history": list(self._overnight_history),
+                "hourly_history": [list(h) for h in self._hourly_history],
+                "hourly_energy_kwh": self._hourly_energy_kwh,
                 "daily_energy_kwh": self._daily_energy_kwh,
                 "overnight_energy_kwh": self._overnight_energy_kwh,
                 "grid_energy_today_kwh": self._grid_energy_today_kwh,
@@ -470,6 +555,14 @@ class SunriseSocCoordinator:
         self._daily_energy_kwh = data.get("daily_energy_kwh", 0.0)
         self._overnight_energy_kwh = data.get("overnight_energy_kwh", 0.0)
         self._grid_energy_today_kwh = data.get("grid_energy_today_kwh", 0.0)
+
+        # Restore hourly data
+        saved_hourly = data.get("hourly_history", [])
+        if saved_hourly and len(saved_hourly) == 24:
+            self._hourly_history = [deque(h, maxlen=7) for h in saved_hourly]
+        saved_hourly_energy = data.get("hourly_energy_kwh", [])
+        if saved_hourly_energy and len(saved_hourly_energy) == 24:
+            self._hourly_energy_kwh = saved_hourly_energy
 
         # Only restore frozen data if storage version matches
         stored_version = data.get("storage_version", 0)

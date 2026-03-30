@@ -90,17 +90,44 @@ def simulate_daytime(
     daytime_hours: float,
     battery_cap: float,
     battery_floor: float,
+    hourly_consumption: list[float] | None = None,
+    sunrise_hour: float = 6.0,
+    sunset_hour: float = 18.0,
 ) -> DaytimeResult:
     """Simulate hour-by-hour daytime using a sine curve for solar production.
+
+    If hourly_consumption is provided (24 floats, kWh per hour), uses actual
+    hourly rates for the daytime hours. Otherwise falls back to flat rate.
 
     Returns DaytimeResult with sunset_kwh, surplus energy, and morning low.
     morning_low_kwh = lowest battery level before solar exceeds consumption.
     """
-    steps = max(1, int(round(daytime_hours)))
-    consumption_per_step = daytime_consumption_kwh / steps if steps > 0 else 0
+    # Calculate steps from actual hour span (fix #3)
+    if hourly_consumption and len(hourly_consumption) == 24:
+        steps = max(1, int(math.ceil(sunset_hour)) - int(math.floor(sunrise_hour)))
+    else:
+        steps = max(1, int(round(daytime_hours)))
+
+    # Build per-step consumption from hourly data or flat rate
+    if hourly_consumption and len(hourly_consumption) == 24:
+        consumption_per_step = []
+        sr_int = int(math.floor(sunrise_hour))
+        for i in range(steps):
+            hour_idx = (sr_int + i) % 24
+            if i == 0:
+                frac = 1.0 - (sunrise_hour - math.floor(sunrise_hour))
+            elif i == steps - 1:
+                frac = sunset_hour - math.floor(sunset_hour)
+                if frac <= 0:
+                    frac = 1.0
+            else:
+                frac = 1.0
+            consumption_per_step.append(hourly_consumption[hour_idx] * frac)
+    else:
+        flat_rate = daytime_consumption_kwh / steps if steps > 0 else 0
+        consumption_per_step = [flat_rate] * steps
 
     # Generate sine-shaped solar production per step
-    # Peaks at solar noon (midpoint), zero at sunrise/sunset
     solar_factors = [math.sin((i + 0.5) / steps * math.pi) for i in range(steps)]
     factor_sum = sum(solar_factors)
 
@@ -115,16 +142,15 @@ def simulate_daytime(
     net_positive_seen = False
 
     for i in range(steps):
-        battery += solar_per_step[i] - consumption_per_step
+        battery += solar_per_step[i] - consumption_per_step[i]
         if battery > battery_cap:
             surplus += battery - battery_cap
             battery = battery_cap
         if battery < battery_floor:
             battery = battery_floor
 
-        # Track morning low: lowest point before solar first exceeds consumption
         if not net_positive_seen:
-            if solar_per_step[i] >= consumption_per_step:
+            if solar_per_step[i] >= consumption_per_step[i]:
                 net_positive_seen = True
             else:
                 morning_low = min(morning_low, battery)
@@ -134,6 +160,99 @@ def simulate_daytime(
         surplus_kwh=surplus,
         morning_low_kwh=morning_low,
     )
+
+
+def calc_overnight_drain_hourly(
+    sunset_kwh: float,
+    backup_charged_kwh: float,
+    backup_kw: float,
+    backup_activation_hour: int,
+    hourly_consumption: list[float],
+    sunset_hour: float,
+    sunrise_hour: float,
+    main_floor_kwh: float,
+    main_cap: float,
+    backup_mode: str = "always",
+    target_kwh: float = 0.0,
+) -> float:
+    """Calculate overnight drain using hourly consumption rates.
+
+    Steps hour-by-hour from sunset to sunrise, applying each hour's
+    consumption rate and backup battery assist after activation hour.
+    """
+    battery = sunset_kwh
+    backup_remaining = backup_charged_kwh
+    ss_int = int(math.floor(sunset_hour))
+    sr_int = int(math.ceil(sunrise_hour)) % 24
+
+    # Guard: if overnight is effectively zero, return sunset value
+    if ss_int == sr_int:
+        return max(main_floor_kwh, min(main_cap, sunset_kwh))
+
+    def _is_backup_active(hour: int) -> bool:
+        """Check if backup should be active at this hour."""
+        if backup_kw <= 0 or backup_remaining <= 0:
+            return False
+        h24 = hour % 24
+        # Backup active from activation_hour to sunrise (wrapping through midnight)
+        if backup_activation_hour <= sr_int:
+            return backup_activation_hour <= h24 < sr_int
+        else:
+            return h24 >= backup_activation_hour or h24 < sr_int
+
+    def _run_overnight(use_backup: bool) -> float:
+        """Simulate overnight drain, optionally with backup assist."""
+        nonlocal backup_remaining
+        bat = sunset_kwh
+        br = backup_charged_kwh if use_backup else 0.0
+        h = ss_int
+        for _ in range(25):  # Max 24 iterations + safety
+            next_h = (h + 1) % 24
+            # Fractional first/last hours
+            if h == ss_int:
+                frac = 1.0 - (sunset_hour - math.floor(sunset_hour))
+            elif next_h == sr_int:
+                frac = sunrise_hour - math.floor(sunrise_hour)
+                if frac <= 0:
+                    frac = 1.0
+            else:
+                frac = 1.0
+
+            consumption = hourly_consumption[h % 24] * frac
+
+            if use_backup and br > 0 and backup_kw > 0 and _is_backup_active(h):
+                backup_energy = min(br, backup_kw * frac)
+                consumption -= backup_energy
+                br -= backup_energy
+
+            bat -= consumption
+            if bat < main_floor_kwh:
+                bat = main_floor_kwh
+            if bat > main_cap:
+                bat = main_cap
+
+            h = next_h
+            if h == sr_int:
+                break
+
+        if use_backup:
+            backup_remaining = br
+        return bat
+
+    # For target-based mode, first check without backup
+    if backup_mode == "target_based" and target_kwh > 0:
+        no_backup = _run_overnight(use_backup=False)
+        if no_backup >= target_kwh:
+            return max(main_floor_kwh, min(main_cap, no_backup))
+        # Need backup — run with it
+        with_backup = _run_overnight(use_backup=True)
+        if with_backup > target_kwh:
+            return target_kwh
+        return max(main_floor_kwh, min(main_cap, with_backup))
+
+    # Always mode
+    result = _run_overnight(use_backup=True)
+    return max(main_floor_kwh, min(main_cap, result))
 
 
 def get_consumption(
@@ -398,14 +517,17 @@ def predict_future_day(
     backup: BackupConfig,
     overnight_params: OvernightParams,
     target_kwh: float = 0.0,
+    hourly_consumption: list[float] | None = None,
+    sunrise_hour: float = 6.0,
+    sunset_hour: float = 18.0,
 ) -> DayResult:
-    """Predict SoC for Days 2-7 using sine curve solar simulation."""
+    """Predict SoC for Days 2-7 using sine curve solar simulation with hourly consumption."""
     daytime_kwh = max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)
     daytime_hours = 24.0 - overnight_params.overnight_hours
     if daytime_hours < 1:
         daytime_hours = 12.0
 
-    # Simulate hour-by-hour with sine curve solar production
+    # Simulate daytime with hourly consumption if available
     sim = simulate_daytime(
         start_kwh=prev_kwh,
         solar_total_kwh=solar_kwh,
@@ -413,22 +535,41 @@ def predict_future_day(
         daytime_hours=daytime_hours,
         battery_cap=main.capacity_kwh,
         battery_floor=main.floor_kwh,
+        hourly_consumption=hourly_consumption,
+        sunrise_hour=sunrise_hour,
+        sunset_hour=sunset_hour,
     )
     sunset_kwh = sim.sunset_kwh
 
     # Backup charges from solar surplus (energy clipped when battery hit cap)
     backup_charged = min(backup.usable_kwh, sim.surplus_kwh) if backup.enabled else 0.0
 
-    sunrise_kwh = calc_overnight_drain(
-        sunset_kwh=sunset_kwh,
-        backup_charged_kwh=backup_charged,
-        backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
-        params=overnight_params,
-        main_floor_kwh=main.floor_kwh,
-        main_cap=main.capacity_kwh,
-        backup_mode=backup.mode if backup.enabled else "always",
-        target_kwh=target_kwh,
-    )
+    # Use hourly overnight drain if hourly data available
+    if hourly_consumption and len(hourly_consumption) == 24:
+        sunrise_kwh = calc_overnight_drain_hourly(
+            sunset_kwh=sunset_kwh,
+            backup_charged_kwh=backup_charged,
+            backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
+            backup_activation_hour=backup.activation_hour if backup.enabled else 2,
+            hourly_consumption=hourly_consumption,
+            sunset_hour=sunset_hour,
+            sunrise_hour=sunrise_hour,
+            main_floor_kwh=main.floor_kwh,
+            main_cap=main.capacity_kwh,
+            backup_mode=backup.mode if backup.enabled else "always",
+            target_kwh=target_kwh,
+        )
+    else:
+        sunrise_kwh = calc_overnight_drain(
+            sunset_kwh=sunset_kwh,
+            backup_charged_kwh=backup_charged,
+            backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
+            params=overnight_params,
+            main_floor_kwh=main.floor_kwh,
+            main_cap=main.capacity_kwh,
+            backup_mode=backup.mode if backup.enabled else "always",
+            target_kwh=target_kwh,
+        )
 
     return DayResult(
         soc_percent=round(sunrise_kwh / main.capacity_kwh * 100, 1),

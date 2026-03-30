@@ -157,6 +157,16 @@ After setup, the integration creates these sensors:
 | `grid_needed_kwh` | Grid import needed to reach target SoC (kWh) |
 | `grid_used_today_kwh` | Grid import accumulated today (kWh) — Day 1 only |
 | `target_soc` | Configured target SoC (%) |
+| `morning_low_kwh` | Predicted lowest battery level before solar ramps up (kWh) — Days 2-7 |
+| `morning_low_pct` | Same as percentage — Days 2-7 |
+
+### Consumption Average Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `history` | List of daily values (up to 7) |
+| `days` | Number of days in the history |
+| `hourly_averages` | 24-element list of per-hour consumption averages (kWh/h) |
 
 ### Day 1 Additional Attributes
 
@@ -212,12 +222,32 @@ This is useful for systems where you want to preserve the backup for emergencies
 
 The integration tracks your energy consumption internally — no external helpers, utility meters, or Riemann sums needed.
 
-- **Daily consumption**: Accumulated from your house load power sensor using trapezoidal integration, resets at midnight
-- **Overnight consumption**: Same method, but only accumulates during nighttime hours (sunset to sunrise), resets at sunrise
+### Hourly Consumption Model
 
-After 7 days, the integration has a full week of real consumption data and stops using the fallback values. The 7-day rolling average is calculated from exactly 7 daily values with equal weighting.
+Consumption is tracked in **24 hourly buckets** (one per hour of the day). Each bucket builds a 7-day rolling average for that specific hour. This captures real consumption patterns:
 
-All consumption data persists across HA restarts.
+- **Evening hours** (6-10 PM): typically higher consumption (cooking, HVAC, entertainment)
+- **Overnight hours** (1-5 AM): typically lower consumption (standby loads only)
+- **Morning hours** (6-9 AM): moderate consumption spike
+
+The hourly averages are used by the prediction model to simulate each hour of the day individually, rather than using flat daytime/overnight rates. This produces more accurate sunset SoC predictions and morning low estimates.
+
+### How It Accumulates
+
+- House load power sensor is sampled on every state change (~30-60 seconds)
+- Energy is accumulated via trapezoidal integration into the current hour's bucket
+- At each hour boundary, the completed hour's energy is recorded into its 7-day history
+- Daily and overnight totals are also tracked for backward compatibility
+
+### Fallback Behavior
+
+Until real hourly data accumulates (first week), the integration uses flat rates:
+- **Daytime hours**: flat rate derived from fallback daily consumption
+- **Overnight hours**: flat rate derived from fallback overnight consumption
+
+As each hour gets its first real data point, it switches from fallback to real. After 7 days, all 24 hours use real rolling averages.
+
+All consumption data (including hourly histories) persists across HA restarts.
 
 ## Dashboard Card
 

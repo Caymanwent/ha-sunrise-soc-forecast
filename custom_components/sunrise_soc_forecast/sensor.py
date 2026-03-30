@@ -152,9 +152,16 @@ class ConsumptionAverageSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return history."""
+        """Return history and hourly breakdown."""
         if self._period == "daily":
             history = self._coordinator.daily_history
         else:
             history = self._coordinator.overnight_history
-        return {"history": history, "days": len(history)}
+
+        attrs = {"history": history, "days": len(history)}
+
+        # Add hourly averages
+        hourly = self._coordinator.get_hourly_averages()
+        attrs["hourly_averages"] = hourly
+
+        return attrs
