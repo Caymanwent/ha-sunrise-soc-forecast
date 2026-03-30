@@ -70,6 +70,17 @@ class DayResult:
     daytime_consumption_kwh: float = 0.0
     backup_charged_kwh: float = 0.0
     grid_needed_kwh: float = 0.0
+    morning_low_kwh: float = 0.0
+    morning_low_pct: float = 0.0
+
+
+@dataclass
+class DaytimeResult:
+    """Result of daytime simulation."""
+
+    sunset_kwh: float
+    surplus_kwh: float
+    morning_low_kwh: float
 
 
 def simulate_daytime(
@@ -79,11 +90,11 @@ def simulate_daytime(
     daytime_hours: float,
     battery_cap: float,
     battery_floor: float,
-) -> tuple[float, float]:
+) -> DaytimeResult:
     """Simulate hour-by-hour daytime using a sine curve for solar production.
 
-    Returns (sunset_kwh, solar_surplus_kwh).
-    solar_surplus_kwh = energy clipped when battery hits cap, available for backup.
+    Returns DaytimeResult with sunset_kwh, surplus energy, and morning low.
+    morning_low_kwh = lowest battery level before solar exceeds consumption.
     """
     steps = max(1, int(round(daytime_hours)))
     consumption_per_step = daytime_consumption_kwh / steps if steps > 0 else 0
@@ -100,6 +111,8 @@ def simulate_daytime(
 
     battery = start_kwh
     surplus = 0.0
+    morning_low = start_kwh
+    net_positive_seen = False
 
     for i in range(steps):
         battery += solar_per_step[i] - consumption_per_step
@@ -109,7 +122,18 @@ def simulate_daytime(
         if battery < battery_floor:
             battery = battery_floor
 
-    return battery, surplus
+        # Track morning low: lowest point before solar first exceeds consumption
+        if not net_positive_seen:
+            if solar_per_step[i] >= consumption_per_step:
+                net_positive_seen = True
+            else:
+                morning_low = min(morning_low, battery)
+
+    return DaytimeResult(
+        sunset_kwh=battery,
+        surplus_kwh=surplus,
+        morning_low_kwh=morning_low,
+    )
 
 
 def get_consumption(
@@ -382,7 +406,7 @@ def predict_future_day(
         daytime_hours = 12.0
 
     # Simulate hour-by-hour with sine curve solar production
-    sunset_kwh, solar_surplus = simulate_daytime(
+    sim = simulate_daytime(
         start_kwh=prev_kwh,
         solar_total_kwh=solar_kwh,
         daytime_consumption_kwh=daytime_kwh,
@@ -390,9 +414,10 @@ def predict_future_day(
         battery_cap=main.capacity_kwh,
         battery_floor=main.floor_kwh,
     )
+    sunset_kwh = sim.sunset_kwh
 
     # Backup charges from solar surplus (energy clipped when battery hit cap)
-    backup_charged = min(backup.usable_kwh, solar_surplus) if backup.enabled else 0.0
+    backup_charged = min(backup.usable_kwh, sim.surplus_kwh) if backup.enabled else 0.0
 
     sunrise_kwh = calc_overnight_drain(
         sunset_kwh=sunset_kwh,
@@ -411,4 +436,6 @@ def predict_future_day(
         solcast_kwh=round(solar_kwh, 2),
         daytime_consumption_kwh=round(daytime_kwh, 2),
         backup_charged_kwh=round(backup_charged, 2),
+        morning_low_kwh=round(sim.morning_low_kwh, 2),
+        morning_low_pct=round(sim.morning_low_kwh / main.capacity_kwh * 100, 1),
     )

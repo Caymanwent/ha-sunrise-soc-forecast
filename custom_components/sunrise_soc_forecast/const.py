@@ -3,7 +3,7 @@
 DOMAIN = "sunrise_soc_forecast"
 
 # Increment this when calculation logic changes to invalidate stale frozen data
-STORAGE_VERSION = 2
+STORAGE_VERSION = 3
 
 # Config keys
 CONF_MAIN_SOC_ENTITY = "main_soc_entity"

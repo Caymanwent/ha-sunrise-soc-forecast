@@ -1,13 +1,13 @@
 type: markdown
 content: |
   {% set days = [1,2,3,4,5,6,7] -%}
-  | Day | Status | SoC % | kWh | Solcast | Daytime | Backup | Grid Need |
-  |-----|--------|-------|-----|---------|---------|-------|-----------|
+  | Day | Status | SoC % | kWh | AM Low | Solcast | Daytime | Backup | Grid Need |
+  |-----|--------|-------|-----|--------|---------|---------|--------|-----------|
   {%- for d in days %}
   {%- set entity = 'sensor.predicted_sunrise_soc_day_' ~ d %}
   {%- set soc = states(entity) | float(0) %}
   {%- if soc > 0 %}
-  | {% if d == 1 %}{% if is_state('binary_sensor.is_overnight', 'on') and now().hour < 12 %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d == 1 %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}{{ state_attr(entity, 'solcast_kwh') }}{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
+  | {% if d == 1 %}{% if is_state('binary_sensor.is_overnight', 'on') and now().hour < 12 %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d < 7 %}{{ state_attr('sensor.predicted_sunrise_soc_day_' ~ (d+1), 'morning_low_pct') }}%{% else %}—{% endif %} | {% if d == 1 %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}{{ state_attr(entity, 'solcast_kwh') }}{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
   {%- endif %}
   {%- endfor %}
 

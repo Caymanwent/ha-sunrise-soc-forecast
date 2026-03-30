@@ -105,6 +105,8 @@ class SunriseSocSensor(SensorEntity):
             attrs["using_fallback"] = self._coordinator.get_consumption().using_fallback
         else:
             attrs["solcast_kwh"] = result.solcast_kwh
+            attrs["morning_low_kwh"] = result.morning_low_kwh
+            attrs["morning_low_pct"] = result.morning_low_pct
 
         return attrs
 

@@ -442,6 +442,8 @@ class SunriseSocCoordinator:
                         "daytime_consumption_kwh": v.daytime_consumption_kwh,
                         "backup_charged_kwh": v.backup_charged_kwh,
                         "grid_needed_kwh": v.grid_needed_kwh,
+                        "morning_low_kwh": v.morning_low_kwh,
+                        "morning_low_pct": v.morning_low_pct,
                     }
                     for k, v in self._frozen_data.items()
                 },
@@ -488,6 +490,8 @@ class SunriseSocCoordinator:
                         daytime_consumption_kwh=v.get("daytime_consumption_kwh", 0),
                         backup_charged_kwh=v.get("backup_charged_kwh", 0),
                         grid_needed_kwh=v.get("grid_needed_kwh", 0),
+                        morning_low_kwh=v.get("morning_low_kwh", 0),
+                        morning_low_pct=v.get("morning_low_pct", 0),
                     )
                 except (TypeError, ValueError):
                     _LOGGER.warning("Skipping corrupt frozen data for day %s", k)
