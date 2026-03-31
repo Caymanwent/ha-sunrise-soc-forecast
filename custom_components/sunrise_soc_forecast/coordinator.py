@@ -378,16 +378,22 @@ class SunriseSocCoordinator:
             half_hourly = [0.0] * 48
             for entry in detailed:
                 try:
-                    period = entry.get("period_start", "")
+                    period = entry.get("period_start")
                     pv = float(entry.get("pv_estimate", 0))
-                    if "T" in period:
-                        time_part = period.split("T")[1][:5]  # "07:30"
+                    # Handle both datetime objects and strings
+                    if hasattr(period, "hour"):
+                        hour = period.hour
+                        minute = period.minute
+                    elif isinstance(period, str) and "T" in period:
+                        time_part = period.split("T")[1][:5]
                         hour = int(time_part[:2])
                         minute = int(time_part[3:5])
-                        idx = hour * 2 + (1 if minute >= 30 else 0)
-                        if 0 <= idx < 48:
-                            half_hourly[idx] = pv
-                except (ValueError, TypeError, IndexError):
+                    else:
+                        continue
+                    idx = hour * 2 + (1 if minute >= 30 else 0)
+                    if 0 <= idx < 48:
+                        half_hourly[idx] = pv
+                except (ValueError, TypeError, IndexError, AttributeError):
                     continue
             if any(v > 0 for v in half_hourly):
                 return half_hourly
@@ -398,14 +404,17 @@ class SunriseSocCoordinator:
             half_hourly = [0.0] * 48
             for entry in detailed:
                 try:
-                    period = entry.get("period_start", "")
+                    period = entry.get("period_start")
                     pv = float(entry.get("pv_estimate", 0))
-                    if "T" in period:
+                    if hasattr(period, "hour"):
+                        hour = period.hour
+                    elif isinstance(period, str) and "T" in period:
                         hour = int(period.split("T")[1][:2])
-                        # Split hourly value evenly into two half-hours
-                        half_hourly[hour * 2] = pv / 2
-                        half_hourly[hour * 2 + 1] = pv / 2
-                except (ValueError, TypeError, IndexError):
+                    else:
+                        continue
+                    half_hourly[hour * 2] = pv / 2
+                    half_hourly[hour * 2 + 1] = pv / 2
+                except (ValueError, TypeError, IndexError, AttributeError):
                     continue
             if any(v > 0 for v in half_hourly):
                 return half_hourly
