@@ -569,9 +569,11 @@ def predict_day1_daytime(
     battery = current_kwh
     surplus = 0.0
     total_consumption = 0.0
+    total_solar = 0.0
 
     for i in range(remaining_steps):
         total_consumption += consumption_per_step[i]
+        total_solar += solar_per_step[i]
         battery += solar_per_step[i] - consumption_per_step[i]
         if battery > main.capacity_kwh:
             surplus += battery - main.capacity_kwh
@@ -618,7 +620,7 @@ def predict_day1_daytime(
     return DayResult(
         soc_percent=round(sunrise_kwh / main.capacity_kwh * 100, 1),
         predicted_kwh=round(sunrise_kwh, 2),
-        solcast_kwh=round(remaining_solar, 2),
+        solcast_kwh=round(total_solar, 2),
         daytime_consumption_kwh=round(total_consumption, 2),
         backup_charged_kwh=round(backup_charged, 2),
     )

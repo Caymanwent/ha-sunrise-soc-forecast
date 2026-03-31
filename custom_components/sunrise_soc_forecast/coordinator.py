@@ -392,7 +392,7 @@ class SunriseSocCoordinator:
                         continue
                     idx = hour * 2 + (1 if minute >= 30 else 0)
                     if 0 <= idx < 48:
-                        half_hourly[idx] = pv
+                        half_hourly[idx] = pv * 0.5  # Convert kW to kWh per half-hour
                 except (ValueError, TypeError, IndexError, AttributeError):
                     continue
             if any(v > 0 for v in half_hourly):
