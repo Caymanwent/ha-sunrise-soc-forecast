@@ -383,6 +383,8 @@ class SunriseSocCoordinator:
             if self.backup.enabled:
                 backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
 
+            current_hour_frac = now.hour + now.minute / 60
+
             self.results[1] = predict_day1_daytime(
                 current_kwh=main_kwh,
                 remaining_solar=remaining_solar,
@@ -394,6 +396,9 @@ class SunriseSocCoordinator:
                 backup_soc_pct=backup_soc,
                 overnight_params=overnight_params,
                 target_kwh=target_kwh,
+                hourly_consumption=hourly_avg,
+                current_hour=current_hour_frac,
+                sunset_hour=sunset_hour,
             )
         else:
             backup_available = 0.0
