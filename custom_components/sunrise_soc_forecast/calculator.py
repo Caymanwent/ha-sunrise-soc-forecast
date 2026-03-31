@@ -506,6 +506,7 @@ def predict_day1_nighttime(
     return DayResult(
         soc_percent=round(main_kwh / main.capacity_kwh * 100, 1),
         predicted_kwh=round(main_kwh, 2),
+        backup_charged_kwh=round(backup_available_kwh, 2),
     )
 
 
