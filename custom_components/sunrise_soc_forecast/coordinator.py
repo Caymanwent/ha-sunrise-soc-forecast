@@ -112,8 +112,8 @@ class SunriseSocCoordinator:
         self._last_grid_time: datetime | None = None
         self._was_overnight: bool = False
 
-        # Frozen data for Days 2-7 overnight
-        self._frozen_data: dict[int, DayResult] = {}
+        # Frozen Solcast values — captured at sunset to prevent midnight shift
+        self._frozen_solcast: dict[int, float] = {}
 
         # Current results
         self.results: dict[int, DayResult] = {}
@@ -177,7 +177,7 @@ class SunriseSocCoordinator:
         if self._current_hour is None:
             self._current_hour = current_hour
 
-        # Detect hour change — record the completed hour
+        # Detect hour change — record the completed hour and save
         if current_hour != self._current_hour:
             prev_hour = self._current_hour
             if self._hourly_energy_kwh[prev_hour] > 0:
@@ -186,6 +186,7 @@ class SunriseSocCoordinator:
                 )
             self._hourly_energy_kwh[prev_hour] = 0.0
             self._current_hour = current_hour
+            self.hass.async_create_task(self.async_save())
 
         if self._last_power_reading is not None and self._last_power_time is not None:
             elapsed_hours = (now - self._last_power_time).total_seconds() / 3600
@@ -425,26 +426,28 @@ class SunriseSocCoordinator:
                 main=self.main,
             )
 
-        # Days 2-N
+        # Days 2-N — always calculate live, only Solcast freezes overnight
         for day in range(2, self.num_days + 1):
-            if overnight and day in self._frozen_data and self._frozen_data[day].soc_percent > 0:
-                self.results[day] = self._frozen_data[day]
+            prev_kwh = self.results.get(day - 1, DayResult(0, 0)).predicted_kwh
+
+            # Use frozen Solcast during overnight to prevent midnight shift
+            if overnight and day in self._frozen_solcast:
+                solar = self._frozen_solcast[day]
             else:
-                prev_kwh = self.results.get(day - 1, DayResult(0, 0)).predicted_kwh
                 solar = self.get_solcast_kwh(day)
 
-                self.results[day] = predict_future_day(
-                    prev_kwh=prev_kwh,
-                    solar_kwh=solar,
-                    consumption=consumption,
-                    main=self.main,
-                    backup=self.backup,
-                    overnight_params=overnight_params,
-                    target_kwh=target_kwh,
-                    hourly_consumption=hourly_avg,
-                    sunrise_hour=sunrise_hour,
-                    sunset_hour=sunset_hour,
-                )
+            self.results[day] = predict_future_day(
+                prev_kwh=prev_kwh,
+                solar_kwh=solar,
+                consumption=consumption,
+                main=self.main,
+                backup=self.backup,
+                overnight_params=overnight_params,
+                target_kwh=target_kwh,
+                hourly_consumption=hourly_avg,
+                sunrise_hour=sunrise_hour,
+                sunset_hour=sunset_hour,
+            )
 
         # Calculate grid needed for each day
         for day in range(1, self.num_days + 1):
@@ -461,11 +464,10 @@ class SunriseSocCoordinator:
                 _LOGGER.debug("Error in update callback", exc_info=True)
 
     def freeze(self) -> None:
-        """Freeze Days 2-7 values for overnight."""
+        """Freeze Solcast values at sunset to prevent midnight shift."""
         for day in range(2, self.num_days + 1):
-            if day in self.results:
-                self._frozen_data[day] = self.results[day]
-        _LOGGER.debug("Frozen SoC data captured for days 2-%d", self.num_days)
+            self._frozen_solcast[day] = self.get_solcast_kwh(day)
+        _LOGGER.debug("Frozen Solcast captured for days 2-%d: %s", self.num_days, self._frozen_solcast)
 
     def register_callback(self, callback_fn) -> None:
         """Register an update callback."""
@@ -526,19 +528,7 @@ class SunriseSocCoordinator:
                 "daily_energy_kwh": self._daily_energy_kwh,
                 "overnight_energy_kwh": self._overnight_energy_kwh,
                 "grid_energy_today_kwh": self._grid_energy_today_kwh,
-                "frozen_data": {
-                    str(k): {
-                        "soc_percent": v.soc_percent,
-                        "predicted_kwh": v.predicted_kwh,
-                        "solcast_kwh": v.solcast_kwh,
-                        "daytime_consumption_kwh": v.daytime_consumption_kwh,
-                        "backup_charged_kwh": v.backup_charged_kwh,
-                        "grid_needed_kwh": v.grid_needed_kwh,
-                        "morning_low_kwh": v.morning_low_kwh,
-                        "morning_low_pct": v.morning_low_pct,
-                    }
-                    for k, v in self._frozen_data.items()
-                },
+                "frozen_solcast": {str(k): v for k, v in self._frozen_solcast.items()},
             }
             await self._store.async_save(data)
         except Exception:
@@ -571,37 +561,20 @@ class SunriseSocCoordinator:
         if saved_hourly_energy and len(saved_hourly_energy) == 24:
             self._hourly_energy_kwh = saved_hourly_energy
 
-        # Only restore frozen data if storage version matches
-        stored_version = data.get("storage_version", 0)
-        if stored_version != STORAGE_VERSION:
-            _LOGGER.info(
-                "Storage version changed (%s → %s), discarding stale frozen data",
-                stored_version,
-                STORAGE_VERSION,
-            )
-        else:
-            frozen = data.get("frozen_data", {})
-            for k, v in frozen.items():
-                try:
-                    self._frozen_data[int(k)] = DayResult(
-                        soc_percent=v.get("soc_percent", 0),
-                        predicted_kwh=v.get("predicted_kwh", 0),
-                        solcast_kwh=v.get("solcast_kwh", 0),
-                        daytime_consumption_kwh=v.get("daytime_consumption_kwh", 0),
-                        backup_charged_kwh=v.get("backup_charged_kwh", 0),
-                        grid_needed_kwh=v.get("grid_needed_kwh", 0),
-                        morning_low_kwh=v.get("morning_low_kwh", 0),
-                        morning_low_pct=v.get("morning_low_pct", 0),
-                    )
-                except (TypeError, ValueError):
-                    _LOGGER.warning("Skipping corrupt frozen data for day %s", k)
+        # Restore frozen Solcast values
+        frozen_solcast = data.get("frozen_solcast", {})
+        for k, v in frozen_solcast.items():
+            try:
+                self._frozen_solcast[int(k)] = float(v)
+            except (TypeError, ValueError):
+                pass
 
         _LOGGER.info(
             "State restored: %d daily, %d overnight history entries, "
-            "%.1f kWh daily accum, %.1f kWh overnight accum, %d frozen days",
+            "%.1f kWh daily accum, %.1f kWh overnight accum, %d frozen Solcast",
             len(self._daily_history),
             len(self._overnight_history),
             self._daily_energy_kwh,
             self._overnight_energy_kwh,
-            len(self._frozen_data),
+            len(self._frozen_solcast),
         )
