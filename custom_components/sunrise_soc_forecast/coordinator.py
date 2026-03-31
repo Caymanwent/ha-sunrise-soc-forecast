@@ -43,6 +43,7 @@ from .const import (
     CONF_GUARD_THRESHOLD,
     CONF_FORECAST_DAYS,
     CONF_SOLCAST_REMAINING,
+    CONF_SOLCAST_FORECAST_TODAY,
     CONF_GRID_POWER_ENTITY,
     CONF_TARGET_SOC,
     DEFAULT_TARGET_SOC,
@@ -112,8 +113,10 @@ class SunriseSocCoordinator:
         self._last_grid_time: datetime | None = None
         self._was_overnight: bool = False
 
-        # Frozen Solcast values — captured at sunset to prevent midnight shift
+        # Frozen Solcast — captured at sunset to prevent midnight shift
+        # Stores both total and hourly arrays per day
         self._frozen_solcast: dict[int, float] = {}
+        self._frozen_solcast_hourly: dict[int, list[float]] = {}
 
         # Current results
         self.results: dict[int, DayResult] = {}
@@ -329,7 +332,7 @@ class SunriseSocCoordinator:
         return averages
 
     def get_solcast_kwh(self, day: int) -> float:
-        """Get Solcast forecast for a day, handling post-midnight shift."""
+        """Get Solcast daily total for a day, handling post-midnight shift."""
         now = dt_util.now()
         post_midnight = self.is_overnight and now.hour < 12
 
@@ -341,6 +344,73 @@ class SunriseSocCoordinator:
 
         entity_id = self.config.get(conf_key, "")
         return self.get_state_float(entity_id)
+
+    def _get_solcast_entity_id(self, day: int) -> str:
+        """Get the Solcast entity ID for a given day."""
+        if day == 1:
+            return self.config.get(CONF_SOLCAST_FORECAST_TODAY, "")
+        now = dt_util.now()
+        post_midnight = self.is_overnight and now.hour < 12
+        mapping = SOLCAST_SHIFTED if post_midnight else SOLCAST_STANDARD
+        conf_key = mapping.get(day)
+        if conf_key is None:
+            return ""
+        return self.config.get(conf_key, "")
+
+    def get_solcast_hourly(self, day: int) -> list[float] | None:
+        """Get half-hourly solar forecast from detailedForecast attribute.
+
+        Returns a 48-element list of pv_estimate values (kWh per half-hour),
+        or None if detailedForecast isn't available.
+        Falls back to detailedHourly (24 entries split into 48) if detailedForecast unavailable.
+        """
+        entity_id = self._get_solcast_entity_id(day)
+        if not entity_id:
+            return None
+
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return None
+
+        # Try detailedForecast first (48 half-hour entries)
+        detailed = state.attributes.get("detailedForecast")
+        if detailed and isinstance(detailed, list):
+            half_hourly = [0.0] * 48
+            for entry in detailed:
+                try:
+                    period = entry.get("period_start", "")
+                    pv = float(entry.get("pv_estimate", 0))
+                    if "T" in period:
+                        time_part = period.split("T")[1][:5]  # "07:30"
+                        hour = int(time_part[:2])
+                        minute = int(time_part[3:5])
+                        idx = hour * 2 + (1 if minute >= 30 else 0)
+                        if 0 <= idx < 48:
+                            half_hourly[idx] = pv
+                except (ValueError, TypeError, IndexError):
+                    continue
+            if any(v > 0 for v in half_hourly):
+                return half_hourly
+
+        # Fallback: detailedHourly (24 entries → split into 48 half-hours)
+        detailed = state.attributes.get("detailedHourly")
+        if detailed and isinstance(detailed, list):
+            half_hourly = [0.0] * 48
+            for entry in detailed:
+                try:
+                    period = entry.get("period_start", "")
+                    pv = float(entry.get("pv_estimate", 0))
+                    if "T" in period:
+                        hour = int(period.split("T")[1][:2])
+                        # Split hourly value evenly into two half-hours
+                        half_hourly[hour * 2] = pv / 2
+                        half_hourly[hour * 2 + 1] = pv / 2
+                except (ValueError, TypeError, IndexError):
+                    continue
+            if any(v > 0 for v in half_hourly):
+                return half_hourly
+
+        return None
 
     def update(self) -> None:
         """Recalculate all predictions."""
@@ -384,6 +454,7 @@ class SunriseSocCoordinator:
                 backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
 
             current_hour_frac = now.hour + now.minute / 60
+            solar_hourly_day1 = self.get_solcast_hourly(1)
 
             self.results[1] = predict_day1_daytime(
                 current_kwh=main_kwh,
@@ -399,6 +470,7 @@ class SunriseSocCoordinator:
                 hourly_consumption=hourly_avg,
                 current_hour=current_hour_frac,
                 sunset_hour=sunset_hour,
+                hourly_solar=solar_hourly_day1,
             )
         else:
             backup_available = 0.0
@@ -438,8 +510,10 @@ class SunriseSocCoordinator:
             # Use frozen Solcast during overnight to prevent midnight shift
             if overnight and day in self._frozen_solcast:
                 solar = self._frozen_solcast[day]
+                solar_hourly = self._frozen_solcast_hourly.get(day)
             else:
                 solar = self.get_solcast_kwh(day)
+                solar_hourly = self.get_solcast_hourly(day)
 
             self.results[day] = predict_future_day(
                 prev_kwh=prev_kwh,
@@ -452,6 +526,7 @@ class SunriseSocCoordinator:
                 hourly_consumption=hourly_avg,
                 sunrise_hour=sunrise_hour,
                 sunset_hour=sunset_hour,
+                hourly_solar=solar_hourly,
             )
 
         # Calculate grid needed for each day
@@ -472,7 +547,10 @@ class SunriseSocCoordinator:
         """Freeze Solcast values at sunset to prevent midnight shift."""
         for day in range(2, self.num_days + 1):
             self._frozen_solcast[day] = self.get_solcast_kwh(day)
-        _LOGGER.debug("Frozen Solcast captured for days 2-%d: %s", self.num_days, self._frozen_solcast)
+            hourly = self.get_solcast_hourly(day)
+            if hourly:
+                self._frozen_solcast_hourly[day] = hourly
+        _LOGGER.debug("Frozen Solcast captured for days 2-%d", self.num_days)
 
     def register_callback(self, callback_fn) -> None:
         """Register an update callback."""
@@ -534,6 +612,7 @@ class SunriseSocCoordinator:
                 "overnight_energy_kwh": self._overnight_energy_kwh,
                 "grid_energy_today_kwh": self._grid_energy_today_kwh,
                 "frozen_solcast": {str(k): v for k, v in self._frozen_solcast.items()},
+                "frozen_solcast_hourly": {str(k): v for k, v in self._frozen_solcast_hourly.items()},
             }
             await self._store.async_save(data)
         except Exception:
@@ -571,6 +650,14 @@ class SunriseSocCoordinator:
         for k, v in frozen_solcast.items():
             try:
                 self._frozen_solcast[int(k)] = float(v)
+            except (TypeError, ValueError):
+                pass
+
+        frozen_hourly = data.get("frozen_solcast_hourly", {})
+        for k, v in frozen_hourly.items():
+            try:
+                if isinstance(v, list) and len(v) in (24, 48):
+                    self._frozen_solcast_hourly[int(k)] = [float(x) for x in v]
             except (TypeError, ValueError):
                 pass
 

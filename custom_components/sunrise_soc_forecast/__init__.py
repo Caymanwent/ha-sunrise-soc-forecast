@@ -20,6 +20,7 @@ from .const import (
     CONF_BACKUP_SOC_ENTITY,
     CONF_BACKUP_DISCHARGE_ENTITY,
     CONF_SOLCAST_REMAINING,
+    CONF_SOLCAST_FORECAST_TODAY,
     CONF_GRID_POWER_ENTITY,
 )
 from .coordinator import SunriseSocCoordinator
@@ -76,6 +77,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     solcast_remaining = config.get(CONF_SOLCAST_REMAINING, "")
     if solcast_remaining and solcast_remaining not in forecast_entities:
         forecast_entities.append(solcast_remaining)
+    solcast_today = config.get(CONF_SOLCAST_FORECAST_TODAY, "")
+    if solcast_today and solcast_today not in forecast_entities:
+        forecast_entities.append(solcast_today)
 
     @callback
     def _forecast_change_listener(event) -> None:

@@ -93,6 +93,7 @@ def simulate_daytime(
     battery_floor: float,
     hourly_consumption: list[float] | None = None,
     sunrise_hour: float = 6.0,
+    hourly_solar: list[float] | None = None,
     sunset_hour: float = 18.0,
 ) -> DaytimeResult:
     """Simulate hour-by-hour daytime using a sine curve for solar production.
@@ -128,14 +129,50 @@ def simulate_daytime(
         flat_rate = daytime_consumption_kwh / steps if steps > 0 else 0
         consumption_per_step = [flat_rate] * steps
 
-    # Generate sine-shaped solar production per step
-    solar_factors = [math.sin((i + 0.5) / steps * math.pi) for i in range(steps)]
-    factor_sum = sum(solar_factors)
+    # Solar production per step: use Solcast data if available, else sine curve
+    if hourly_solar and len(hourly_solar) == 48:
+        # Half-hourly Solcast forecast: 48 entries, run 2 steps per hour
+        sr_half = int(math.floor(sunrise_hour * 2))
+        ss_half = int(math.ceil(sunset_hour * 2))
+        half_steps = max(1, ss_half - sr_half)
 
-    if factor_sum > 0:
-        solar_per_step = [(f / factor_sum) * solar_total_kwh for f in solar_factors]
+        # Rebuild consumption for half-hour steps
+        if hourly_consumption and len(hourly_consumption) == 24:
+            consumption_per_step = []
+            for i in range(half_steps):
+                hidx = (sr_half + i) // 2 % 24
+                frac = 0.5  # half-hour = half the hourly rate
+                if i == 0:
+                    frac *= (1.0 - (sunrise_hour * 2 - math.floor(sunrise_hour * 2)))
+                elif i == half_steps - 1:
+                    f = sunset_hour * 2 - math.floor(sunset_hour * 2)
+                    frac *= f if f > 0 else 1.0
+                consumption_per_step.append(hourly_consumption[hidx] * frac)
+        else:
+            flat_half = daytime_consumption_kwh / half_steps if half_steps > 0 else 0
+            consumption_per_step = [flat_half] * half_steps
+
+        solar_per_step = []
+        for i in range(half_steps):
+            sidx = (sr_half + i) % 48
+            solar_per_step.append(hourly_solar[sidx])
+
+        steps = half_steps  # override step count for the simulation loop
+    elif hourly_solar and len(hourly_solar) == 24:
+        # Hourly Solcast forecast (fallback from detailedHourly)
+        sr_int = int(math.floor(sunrise_hour))
+        solar_per_step = []
+        for i in range(steps):
+            hour_idx = (sr_int + i) % 24
+            solar_per_step.append(hourly_solar[hour_idx])
     else:
-        solar_per_step = [solar_total_kwh / steps] * steps
+        # Fallback: sine curve distribution
+        solar_factors = [math.sin((i + 0.5) / steps * math.pi) for i in range(steps)]
+        factor_sum = sum(solar_factors)
+        if factor_sum > 0:
+            solar_per_step = [(f / factor_sum) * solar_total_kwh for f in solar_factors]
+        else:
+            solar_per_step = [solar_total_kwh / steps] * steps
 
     battery = start_kwh
     surplus = 0.0
@@ -415,6 +452,7 @@ def predict_day1_daytime(
     hourly_consumption: list[float] | None = None,
     current_hour: float = 12.0,
     sunset_hour: float = 18.0,
+    hourly_solar: list[float] | None = None,
 ) -> DayResult:
     """Day 1 daytime prediction: current SoC + remaining solar → sunset → overnight.
 
@@ -476,21 +514,56 @@ def predict_day1_daytime(
                 frac = 1.0
             consumption_per_step.append(flat_rate * frac)
 
-    # Distribute remaining_solar using the tail portion of the sine curve
-    # The sine curve covers the full day (sunrise to sunset)
-    # We only use the portion from current_hour to sunset
-    solar_factors = []
-    for i in range(remaining_steps):
-        # Position in the full day's sine curve
-        step_in_day = (current_h + i) - sr_int
-        t = (step_in_day + 0.5) / full_steps
-        solar_factors.append(max(0, math.sin(t * math.pi)))
+    # Solar per step: use Solcast data if available, else sine curve
+    if hourly_solar and len(hourly_solar) == 48:
+        # Half-hourly Solcast: rebuild with half-hour steps from current time
+        cur_half = int(math.floor(current_hour * 2))
+        ss_half = int(math.ceil(sunset_hour * 2))
+        remaining_steps = max(1, ss_half - cur_half)
 
-    factor_sum = sum(solar_factors)
-    if factor_sum > 0:
-        solar_per_step = [(f / factor_sum) * remaining_solar for f in solar_factors]
+        # Rebuild consumption for half-hour steps
+        if hourly_consumption and len(hourly_consumption) == 24:
+            consumption_per_step = []
+            for i in range(remaining_steps):
+                hidx = (cur_half + i) // 2 % 24
+                frac = 0.5
+                if remaining_steps == 1:
+                    frac = sunset_hour - current_hour
+                    if frac <= 0:
+                        frac = 0.01
+                elif i == 0:
+                    frac *= (1.0 - (current_hour * 2 - math.floor(current_hour * 2)))
+                elif i == remaining_steps - 1:
+                    f = sunset_hour * 2 - math.floor(sunset_hour * 2)
+                    frac *= f if f > 0 else 1.0
+                consumption_per_step.append(hourly_consumption[hidx] * frac)
+        else:
+            flat_half = (max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)) / remaining_steps if remaining_steps > 0 else 0
+            consumption_per_step = [flat_half] * remaining_steps
+
+        solar_per_step = []
+        for i in range(remaining_steps):
+            sidx = (cur_half + i) % 48
+            solar_per_step.append(hourly_solar[sidx])
+    elif hourly_solar and len(hourly_solar) == 24:
+        # Hourly Solcast forecast for remaining hours
+        solar_per_step = []
+        for i in range(remaining_steps):
+            hour_idx = (current_h + i) % 24
+            solar_per_step.append(hourly_solar[hour_idx])
     else:
-        solar_per_step = [remaining_solar / remaining_steps] * remaining_steps
+        # Fallback: distribute remaining_solar using tail of sine curve
+        solar_factors = []
+        for i in range(remaining_steps):
+            step_in_day = (current_h + i) - sr_int
+            t = (step_in_day + 0.5) / full_steps
+            solar_factors.append(max(0, math.sin(t * math.pi)))
+
+        factor_sum = sum(solar_factors)
+        if factor_sum > 0:
+            solar_per_step = [(f / factor_sum) * remaining_solar for f in solar_factors]
+        else:
+            solar_per_step = [remaining_solar / remaining_steps] * remaining_steps
 
     # Simulate hour by hour with clipping
     battery = current_kwh
@@ -620,14 +693,15 @@ def predict_future_day(
     hourly_consumption: list[float] | None = None,
     sunrise_hour: float = 6.0,
     sunset_hour: float = 18.0,
+    hourly_solar: list[float] | None = None,
 ) -> DayResult:
-    """Predict SoC for Days 2-7 using sine curve solar simulation with hourly consumption."""
+    """Predict SoC for Days 2-7 using hourly solar + consumption data."""
     daytime_kwh = max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)
     daytime_hours = 24.0 - overnight_params.overnight_hours
     if daytime_hours < 1:
         daytime_hours = 12.0
 
-    # Simulate daytime with hourly consumption if available
+    # Simulate daytime with hourly consumption and solar if available
     sim = simulate_daytime(
         start_kwh=prev_kwh,
         solar_total_kwh=solar_kwh,
@@ -637,6 +711,7 @@ def predict_future_day(
         battery_floor=main.floor_kwh,
         hourly_consumption=hourly_consumption,
         sunrise_hour=sunrise_hour,
+        hourly_solar=hourly_solar,
         sunset_hour=sunset_hour,
     )
     sunset_kwh = sim.sunset_kwh

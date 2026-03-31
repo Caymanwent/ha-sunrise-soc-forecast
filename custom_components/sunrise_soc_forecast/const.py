@@ -29,6 +29,7 @@ CONF_DEFAULT_OVERNIGHT = "default_overnight"
 CONF_GUARD_THRESHOLD = "guard_threshold"
 
 CONF_SOLCAST_REMAINING = "solcast_remaining_today"
+CONF_SOLCAST_FORECAST_TODAY = "solcast_forecast_today"
 CONF_SOLCAST_TOMORROW = "solcast_tomorrow"
 CONF_SOLCAST_DAY_3 = "solcast_day_3"
 CONF_SOLCAST_DAY_4 = "solcast_day_4"

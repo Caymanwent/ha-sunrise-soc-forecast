@@ -37,6 +37,7 @@
         "description": "Select your Solcast PV forecast sensors for each forecast day.",
         "data": {
           "solcast_remaining_today": "Remaining today",
+          "solcast_forecast_today": "Forecast today (with hourly detail)",
           "solcast_tomorrow": "Forecast tomorrow",
           "solcast_day_3": "Forecast day 3",
           "solcast_day_4": "Forecast day 4",
@@ -96,6 +97,7 @@
         "description": "Select your Solcast PV forecast sensors.",
         "data": {
           "solcast_remaining_today": "Remaining today",
+          "solcast_forecast_today": "Forecast today (with hourly detail)",
           "solcast_tomorrow": "Forecast tomorrow",
           "solcast_day_3": "Forecast day 3",
           "solcast_day_4": "Forecast day 4",

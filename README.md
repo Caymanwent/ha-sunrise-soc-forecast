@@ -115,15 +115,18 @@ Enable this if you have a secondary battery that assists overnight (e.g., Powerw
 
 Select your Solcast PV forecast sensors. You need one for each forecast period:
 
-| Field | Typical Entity |
-|-------|---------------|
-| Remaining today | `sensor.solcast_pv_forecast_remaining_today` |
-| Forecast tomorrow | `sensor.solcast_pv_forecast_tomorrow` |
-| Forecast day 3 | `sensor.solcast_pv_forecast_day_3` |
-| Forecast day 4 | `sensor.solcast_pv_forecast_day_4` |
-| Forecast day 5 | `sensor.solcast_pv_forecast_day_5` |
-| Forecast day 6 | `sensor.solcast_pv_forecast_day_6` |
-| Forecast day 7 | `sensor.solcast_pv_forecast_day_7` |
+| Field | Typical Entity | Required |
+|-------|---------------|----------|
+| Remaining today | `sensor.solcast_pv_forecast_remaining_today` | Yes |
+| Forecast today (hourly detail) | `sensor.solcast_pv_forecast_today` | Optional |
+| Forecast tomorrow | `sensor.solcast_pv_forecast_tomorrow` | Yes |
+| Forecast day 3 | `sensor.solcast_pv_forecast_day_3` | Yes |
+| Forecast day 4 | `sensor.solcast_pv_forecast_day_4` | Yes |
+| Forecast day 5 | `sensor.solcast_pv_forecast_day_5` | Yes |
+| Forecast day 6 | `sensor.solcast_pv_forecast_day_6` | Yes |
+| Forecast day 7 | `sensor.solcast_pv_forecast_day_7` | Yes |
+
+**Forecast today (recommended)**: If your Solcast integration provides a "forecast today" entity with `detailedForecast` or `detailedHourly` attributes, adding it significantly improves accuracy. The integration uses the actual half-hourly solar production curve instead of a sine approximation, which gives much more accurate morning low (AM Low) predictions.
 
 ### Step 4: Options
 
@@ -330,6 +333,16 @@ automation:
             {{ trigger.to_state.state }}% at sunrise.
             Grid needed: {{ state_attr(trigger.entity_id, 'grid_needed_kwh') }} kWh
 ```
+
+## Upgrading
+
+When updating to a new version, all consumption history and settings are preserved. No reconfiguration is required.
+
+### Recommended after upgrading to v2.5+
+
+For improved prediction accuracy, add the **Forecast Today** Solcast entity via the configure button (Settings → Devices & Services → Sunrise SoC Forecast → Configure). This enables half-hourly solar production curves from Solcast, replacing the sine approximation. The improvement is most noticeable in morning low (AM Low) predictions where the sine curve overestimates early morning solar by up to 7x.
+
+If your Solcast integration doesn't provide a "forecast today" entity with detailed hourly data, the integration continues to work using the sine curve — no action needed.
 
 ## Troubleshooting
 

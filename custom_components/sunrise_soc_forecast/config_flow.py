@@ -24,6 +24,7 @@ from .const import (
     CONF_DEFAULT_OVERNIGHT,
     CONF_GUARD_THRESHOLD,
     CONF_SOLCAST_REMAINING,
+    CONF_SOLCAST_FORECAST_TODAY,
     CONF_SOLCAST_TOMORROW,
     CONF_SOLCAST_DAY_3,
     CONF_SOLCAST_DAY_4,
@@ -156,6 +157,7 @@ class SunriseSocForecastConfigFlow(
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_SOLCAST_REMAINING): ENTITY_SELECTOR,
+                    vol.Optional(CONF_SOLCAST_FORECAST_TODAY): ENTITY_SELECTOR,
                     vol.Required(CONF_SOLCAST_TOMORROW): ENTITY_SELECTOR,
                     vol.Required(CONF_SOLCAST_DAY_3): ENTITY_SELECTOR,
                     vol.Required(CONF_SOLCAST_DAY_4): ENTITY_SELECTOR,
@@ -337,6 +339,10 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
                     vol.Required(
                         CONF_SOLCAST_REMAINING,
                         default=data.get(CONF_SOLCAST_REMAINING),
+                    ): ENTITY_SELECTOR,
+                    vol.Optional(
+                        CONF_SOLCAST_FORECAST_TODAY,
+                        description={"suggested_value": data.get(CONF_SOLCAST_FORECAST_TODAY)},
                     ): ENTITY_SELECTOR,
                     vol.Required(
                         CONF_SOLCAST_TOMORROW,
