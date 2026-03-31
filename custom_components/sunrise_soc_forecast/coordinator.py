@@ -403,7 +403,14 @@ class SunriseSocCoordinator:
                     0,
                     (backup_soc - self.backup.floor_percent) / 100 * self.backup.capacity_kwh,
                 )
-                backup_kw = self.get_state_float(self.config.get(CONF_BACKUP_DISCHARGE_ENTITY, ""))
+                backup_kw_live = self.get_state_float(self.config.get(CONF_BACKUP_DISCHARGE_ENTITY, ""))
+                # Use live rate if actively discharging, fixed rate if backup has charge but idle
+                if backup_kw_live > 0:
+                    backup_kw = backup_kw_live
+                elif backup_available > 0:
+                    backup_kw = self.backup.fixed_discharge_kw
+                else:
+                    backup_kw = 0.0
 
             hours_to_sunrise = max(0, (sunrise - now).total_seconds() / 3600)
 
