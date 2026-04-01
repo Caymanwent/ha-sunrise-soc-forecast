@@ -532,6 +532,8 @@ class SunriseSocCoordinator:
                 main=self.main,
                 inverter_efficiency=self.inverter_efficiency,
                 backup_discharge_efficiency=self.backup_discharge_efficiency,
+                hourly_consumption=hourly_avg,
+                sunrise_hour=sunrise_hour,
             )
 
         # Days 2-N — always calculate live, only Solcast freezes overnight

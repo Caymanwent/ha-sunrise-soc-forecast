@@ -708,43 +708,92 @@ def predict_day1_nighttime(
     main: BatteryConfig,
     inverter_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
+    hourly_consumption: list[float] | None = None,
+    sunrise_hour: float = 6.0,
 ) -> DayResult:
-    """Day 1 nighttime prediction: current SoC - average drain + live backup."""
-    avg_kw = overnight_params.avg_overnight_kw
+    """Day 1 nighttime prediction: current SoC - hourly drain + live backup."""
     eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
+    current_hour = now_dt.hour + now_dt.minute / 60
 
-    # Calculate phase split from now
-    two_am = now_dt.replace(hour=activation_hour, minute=0, second=0, microsecond=0)
-    if now_dt >= two_am:
-        two_am += timedelta(days=1)
+    # Use hourly consumption if available, otherwise fall back to flat rate
+    if hourly_consumption and len(hourly_consumption) == 24:
+        now_int = int(math.floor(current_hour))
+        sr_int = int(math.floor(sunrise_hour))
 
-    if now_dt.hour >= activation_hour and now_dt.hour < 12:
-        hours_phase1 = 0.0
-        hours_phase2 = hours_to_sunrise
-    else:
-        hours_phase1 = max(0, (two_am - now_dt).total_seconds() / 3600)
-        hours_phase1 = min(hours_phase1, hours_to_sunrise)
-        hours_phase2 = hours_to_sunrise - hours_phase1
-
-    main_kwh = current_kwh
-
-    # Phase 1: now → activation, main covers all
-    if hours_phase1 > 0:
-        main_kwh -= avg_kw / eff * hours_phase1
-
-    # Phase 2: activation → sunrise, backup assists
-    if hours_phase2 > 0:
-        if backup_available_kwh <= 0 or backup_kw <= 0:
-            main_kwh -= avg_kw / eff * hours_phase2
-        else:
-            backup_hours = backup_available_kwh / backup_kw
-            net_kw = backup_kw * backup_discharge_efficiency / eff - avg_kw / eff
-            if backup_hours >= hours_phase2:
-                main_kwh += net_kw * hours_phase2
+        def _is_backup_active(h: int) -> bool:
+            h24 = h % 24
+            if activation_hour <= sr_int:
+                return activation_hour <= h24 < sr_int
             else:
-                main_kwh += net_kw * backup_hours
-                remaining = hours_phase2 - backup_hours
-                main_kwh -= avg_kw / eff * remaining
+                return h24 >= activation_hour or h24 < sr_int
+
+        bat = current_kwh
+        br = backup_available_kwh
+
+        h = now_int
+        for _ in range(25):
+            next_h = (h + 1) % 24
+            # Fractional first/last hours
+            if h == now_int:
+                frac = 1.0 - (current_hour - math.floor(current_hour))
+            elif next_h == sr_int:
+                frac = sunrise_hour - math.floor(sunrise_hour)
+                if frac <= 0:
+                    frac = 1.0
+            else:
+                frac = 1.0
+
+            consumption_dc = hourly_consumption[h % 24] * frac / eff
+
+            if br > 0 and backup_kw > 0 and _is_backup_active(h):
+                backup_energy = min(br, backup_kw * frac)
+                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
+                br -= backup_energy
+
+            bat -= consumption_dc
+            if bat < main.floor_kwh:
+                bat = main.floor_kwh
+            if bat > main.capacity_kwh:
+                bat = main.capacity_kwh
+
+            h = next_h
+            if h == sr_int:
+                break
+
+        main_kwh = bat
+    else:
+        # Flat rate fallback
+        avg_kw = overnight_params.avg_overnight_kw
+
+        two_am = now_dt.replace(hour=activation_hour, minute=0, second=0, microsecond=0)
+        if now_dt >= two_am:
+            two_am += timedelta(days=1)
+
+        if now_dt.hour >= activation_hour and now_dt.hour < 12:
+            hours_phase1 = 0.0
+            hours_phase2 = hours_to_sunrise
+        else:
+            hours_phase1 = max(0, (two_am - now_dt).total_seconds() / 3600)
+            hours_phase1 = min(hours_phase1, hours_to_sunrise)
+            hours_phase2 = hours_to_sunrise - hours_phase1
+
+        main_kwh = current_kwh
+
+        if hours_phase1 > 0:
+            main_kwh -= avg_kw / eff * hours_phase1
+
+        if hours_phase2 > 0:
+            if backup_available_kwh <= 0 or backup_kw <= 0:
+                main_kwh -= avg_kw / eff * hours_phase2
+            else:
+                backup_hours = backup_available_kwh / backup_kw
+                net_kw = backup_kw * backup_discharge_efficiency / eff - avg_kw / eff
+                if backup_hours >= hours_phase2:
+                    main_kwh += net_kw * hours_phase2
+                else:
+                    main_kwh += net_kw * backup_hours
+                    remaining = hours_phase2 - backup_hours
+                    main_kwh -= avg_kw / eff * remaining
 
     main_kwh = max(main.floor_kwh, min(main.capacity_kwh, main_kwh))
 
