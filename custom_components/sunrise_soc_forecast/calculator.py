@@ -730,35 +730,46 @@ def predict_day1_nighttime(
         bat = current_kwh
         br = backup_available_kwh
 
-        h = now_int
-        for _ in range(25):
-            next_h = (h + 1) % 24
-            # Fractional first/last hours
-            if h == now_int:
-                frac = 1.0 - (current_hour - math.floor(current_hour))
-            elif next_h == sr_int:
-                frac = sunrise_hour - math.floor(sunrise_hour)
-                if frac <= 0:
+        # When current hour == sunrise hour, only drain the remaining fraction
+        if now_int == sr_int:
+            remaining_frac = max(0, sunrise_hour - current_hour)
+            if remaining_frac > 0:
+                consumption_dc = hourly_consumption[now_int % 24] * remaining_frac / eff
+                if br > 0 and backup_kw > 0 and _is_backup_active(now_int):
+                    backup_energy = min(br, backup_kw * remaining_frac)
+                    consumption_dc -= backup_energy * backup_discharge_efficiency / eff
+                bat -= consumption_dc
+                bat = max(main.floor_kwh, min(main.capacity_kwh, bat))
+        else:
+            h = now_int
+            for _ in range(25):
+                next_h = (h + 1) % 24
+                # Fractional first/last hours
+                if h == now_int:
+                    frac = 1.0 - (current_hour - math.floor(current_hour))
+                elif next_h == sr_int:
+                    frac = sunrise_hour - math.floor(sunrise_hour)
+                    if frac <= 0:
+                        frac = 1.0
+                else:
                     frac = 1.0
-            else:
-                frac = 1.0
 
-            consumption_dc = hourly_consumption[h % 24] * frac / eff
+                consumption_dc = hourly_consumption[h % 24] * frac / eff
 
-            if br > 0 and backup_kw > 0 and _is_backup_active(h):
-                backup_energy = min(br, backup_kw * frac)
-                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
-                br -= backup_energy
+                if br > 0 and backup_kw > 0 and _is_backup_active(h):
+                    backup_energy = min(br, backup_kw * frac)
+                    consumption_dc -= backup_energy * backup_discharge_efficiency / eff
+                    br -= backup_energy
 
-            bat -= consumption_dc
-            if bat < main.floor_kwh:
-                bat = main.floor_kwh
-            if bat > main.capacity_kwh:
-                bat = main.capacity_kwh
+                bat -= consumption_dc
+                if bat < main.floor_kwh:
+                    bat = main.floor_kwh
+                if bat > main.capacity_kwh:
+                    bat = main.capacity_kwh
 
-            h = next_h
-            if h == sr_int:
-                break
+                h = next_h
+                if h == sr_int:
+                    break
 
         main_kwh = bat
     else:
