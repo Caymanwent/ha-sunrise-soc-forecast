@@ -477,8 +477,8 @@ class SunriseSocCoordinator:
             )
             solar_hourly_day1 = self.get_solcast_hourly(1)
 
-            # Skip update if Solcast data is unavailable (e.g., during API refresh)
-            if remaining_solar <= 0 and solar_hourly_day1 is None and 1 in self.results:
+            # Skip update if Solcast data is unavailable (e.g., during API refresh or restart)
+            if remaining_solar <= 0 and solar_hourly_day1 is None:
                 return
 
             hours_to_sunset = max(0, (sunset - now).total_seconds() / 3600)
