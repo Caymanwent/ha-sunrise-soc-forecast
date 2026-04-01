@@ -33,6 +33,9 @@ from .const import (
     CONF_SOLCAST_DAY_7,
     CONF_GRID_POWER_ENTITY,
     CONF_BACKUP_MODE,
+    CONF_BACKUP_CHARGE_EFFICIENCY,
+    CONF_BACKUP_DISCHARGE_EFFICIENCY,
+    CONF_MAIN_INVERTER_EFFICIENCY,
     BACKUP_MODE_ALWAYS,
     BACKUP_MODE_TARGET,
     CONF_FORECAST_DAYS,
@@ -48,6 +51,9 @@ from .const import (
     DEFAULT_GUARD_THRESHOLD,
     DEFAULT_FORECAST_DAYS,
     DEFAULT_TARGET_SOC,
+    DEFAULT_MAIN_INVERTER_EFFICIENCY,
+    DEFAULT_BACKUP_CHARGE_EFFICIENCY,
+    DEFAULT_BACKUP_DISCHARGE_EFFICIENCY,
 )
 
 ENTITY_SELECTOR = selector.EntitySelector(
@@ -84,6 +90,9 @@ class SunriseSocForecastConfigFlow(
                     vol.Required(
                         CONF_MAIN_FLOOR, default=DEFAULT_MAIN_FLOOR
                     ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                    vol.Optional(
+                        CONF_MAIN_INVERTER_EFFICIENCY, default=DEFAULT_MAIN_INVERTER_EFFICIENCY
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
                     vol.Optional(CONF_GRID_POWER_ENTITY): ENTITY_SELECTOR,
                 }
             ),
@@ -142,6 +151,12 @@ class SunriseSocForecastConfigFlow(
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional(
+                        CONF_BACKUP_CHARGE_EFFICIENCY, default=DEFAULT_BACKUP_CHARGE_EFFICIENCY
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
+                    vol.Optional(
+                        CONF_BACKUP_DISCHARGE_EFFICIENCY, default=DEFAULT_BACKUP_DISCHARGE_EFFICIENCY
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
                 }
             ),
         )
@@ -243,6 +258,10 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
                         default=data.get(CONF_MAIN_FLOOR, DEFAULT_MAIN_FLOOR),
                     ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
                     vol.Optional(
+                        CONF_MAIN_INVERTER_EFFICIENCY,
+                        description={"suggested_value": data.get(CONF_MAIN_INVERTER_EFFICIENCY, DEFAULT_MAIN_INVERTER_EFFICIENCY)},
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
+                    vol.Optional(
                         CONF_GRID_POWER_ENTITY,
                         description={"suggested_value": data.get(CONF_GRID_POWER_ENTITY)},
                     ): ENTITY_SELECTOR,
@@ -320,6 +339,14 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional(
+                        CONF_BACKUP_CHARGE_EFFICIENCY,
+                        description={"suggested_value": data.get(CONF_BACKUP_CHARGE_EFFICIENCY, DEFAULT_BACKUP_CHARGE_EFFICIENCY)},
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
+                    vol.Optional(
+                        CONF_BACKUP_DISCHARGE_EFFICIENCY,
+                        description={"suggested_value": data.get(CONF_BACKUP_DISCHARGE_EFFICIENCY, DEFAULT_BACKUP_DISCHARGE_EFFICIENCY)},
+                    ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
                 }
             ),
         )

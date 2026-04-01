@@ -9,6 +9,7 @@
           "main_power_entity": "House load power sensor (W)",
           "main_capacity": "Battery capacity (kWh)",
           "main_floor": "Minimum discharge floor (%)",
+          "main_inverter_efficiency": "Inverter efficiency (%)",
           "grid_power_entity": "Grid import power sensor (W) — optional"
         }
       },
@@ -29,7 +30,9 @@
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
           "backup_activation_hour": "Hour backup starts discharging (0-6, e.g., 2 = 2am)",
-          "backup_mode": "Deployment mode"
+          "backup_mode": "Deployment mode",
+          "backup_charge_efficiency": "Charge efficiency (%)",
+          "backup_discharge_efficiency": "Discharge efficiency (%)"
         }
       },
       "solcast": {
@@ -69,6 +72,7 @@
           "main_power_entity": "House load power sensor (W)",
           "main_capacity": "Battery capacity (kWh)",
           "main_floor": "Minimum discharge floor (%)",
+          "main_inverter_efficiency": "Inverter efficiency (%)",
           "grid_power_entity": "Grid import power sensor (W) — optional"
         }
       },
@@ -89,7 +93,9 @@
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
           "backup_activation_hour": "Hour backup starts discharging (0-6)",
-          "backup_mode": "Deployment mode"
+          "backup_mode": "Deployment mode",
+          "backup_charge_efficiency": "Charge efficiency (%)",
+          "backup_discharge_efficiency": "Discharge efficiency (%)"
         }
       },
       "solcast": {

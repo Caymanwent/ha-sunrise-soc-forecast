@@ -19,6 +19,8 @@ CONF_BACKUP_FLOOR = "backup_floor"
 CONF_BACKUP_DISCHARGE_KW = "backup_discharge_kw"
 CONF_BACKUP_ACTIVATION_HOUR = "backup_activation_hour"
 CONF_BACKUP_MODE = "backup_mode"
+CONF_BACKUP_CHARGE_EFFICIENCY = "backup_charge_efficiency"
+CONF_BACKUP_DISCHARGE_EFFICIENCY = "backup_discharge_efficiency"
 
 # Backup deployment modes
 BACKUP_MODE_ALWAYS = "always"
@@ -37,6 +39,7 @@ CONF_SOLCAST_DAY_5 = "solcast_day_5"
 CONF_SOLCAST_DAY_6 = "solcast_day_6"
 CONF_SOLCAST_DAY_7 = "solcast_day_7"
 
+CONF_MAIN_INVERTER_EFFICIENCY = "main_inverter_efficiency"
 CONF_GRID_POWER_ENTITY = "grid_power_entity"
 
 CONF_FORECAST_DAYS = "forecast_days"
@@ -54,6 +57,9 @@ DEFAULT_OVERNIGHT_CONSUMPTION = 64.0
 DEFAULT_GUARD_THRESHOLD = 3.0
 DEFAULT_FORECAST_DAYS = 7
 DEFAULT_TARGET_SOC = 20.0
+DEFAULT_MAIN_INVERTER_EFFICIENCY = 94.0
+DEFAULT_BACKUP_CHARGE_EFFICIENCY = 92.0
+DEFAULT_BACKUP_DISCHARGE_EFFICIENCY = 98.0
 
 # Solcast standard mapping: day -> config key
 SOLCAST_STANDARD = {

@@ -37,6 +37,9 @@ from .const import (
     CONF_BACKUP_DISCHARGE_KW,
     CONF_BACKUP_ACTIVATION_HOUR,
     CONF_BACKUP_MODE,
+    CONF_BACKUP_CHARGE_EFFICIENCY,
+    CONF_BACKUP_DISCHARGE_EFFICIENCY,
+    CONF_MAIN_INVERTER_EFFICIENCY,
     BACKUP_MODE_ALWAYS,
     CONF_DEFAULT_DAILY,
     CONF_DEFAULT_OVERNIGHT,
@@ -60,6 +63,9 @@ from .const import (
     DEFAULT_OVERNIGHT_CONSUMPTION,
     DEFAULT_GUARD_THRESHOLD,
     DEFAULT_FORECAST_DAYS,
+    DEFAULT_MAIN_INVERTER_EFFICIENCY,
+    DEFAULT_BACKUP_CHARGE_EFFICIENCY,
+    DEFAULT_BACKUP_DISCHARGE_EFFICIENCY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,6 +98,17 @@ class SunriseSocCoordinator:
 
         self.num_days = config.get(CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS)
         self.target_soc = config.get(CONF_TARGET_SOC, DEFAULT_TARGET_SOC)
+
+        # Inverter efficiency (stored as decimal, e.g., 0.94)
+        self.inverter_efficiency = config.get(
+            CONF_MAIN_INVERTER_EFFICIENCY, DEFAULT_MAIN_INVERTER_EFFICIENCY
+        ) / 100.0
+        self.backup_charge_efficiency = config.get(
+            CONF_BACKUP_CHARGE_EFFICIENCY, DEFAULT_BACKUP_CHARGE_EFFICIENCY
+        ) / 100.0
+        self.backup_discharge_efficiency = config.get(
+            CONF_BACKUP_DISCHARGE_EFFICIENCY, DEFAULT_BACKUP_DISCHARGE_EFFICIENCY
+        ) / 100.0
 
         # Internal consumption tracking — 24 hourly buckets
         # Each hour has a 7-day rolling average
@@ -480,6 +497,9 @@ class SunriseSocCoordinator:
                 current_hour=current_hour_frac,
                 sunset_hour=sunset_hour,
                 hourly_solar=solar_hourly_day1,
+                inverter_efficiency=self.inverter_efficiency,
+                backup_charge_efficiency=self.backup_charge_efficiency,
+                backup_discharge_efficiency=self.backup_discharge_efficiency,
             )
         else:
             backup_available = 0.0
@@ -510,6 +530,8 @@ class SunriseSocCoordinator:
                 now_dt=now,
                 overnight_params=overnight_params,
                 main=self.main,
+                inverter_efficiency=self.inverter_efficiency,
+                backup_discharge_efficiency=self.backup_discharge_efficiency,
             )
 
         # Days 2-N — always calculate live, only Solcast freezes overnight
@@ -536,6 +558,9 @@ class SunriseSocCoordinator:
                 sunrise_hour=sunrise_hour,
                 sunset_hour=sunset_hour,
                 hourly_solar=solar_hourly,
+                inverter_efficiency=self.inverter_efficiency,
+                backup_charge_efficiency=self.backup_charge_efficiency,
+                backup_discharge_efficiency=self.backup_discharge_efficiency,
             )
 
         # Calculate grid needed for each day

@@ -94,6 +94,7 @@ def simulate_daytime(
     hourly_consumption: list[float] | None = None,
     sunrise_hour: float = 6.0,
     hourly_solar: list[float] | None = None,
+    inverter_efficiency: float = 1.0,
     sunset_hour: float = 18.0,
 ) -> DaytimeResult:
     """Simulate hour-by-hour daytime using a sine curve for solar production.
@@ -155,7 +156,15 @@ def simulate_daytime(
         solar_per_step = []
         for i in range(half_steps):
             sidx = (sr_half + i) % 48
-            solar_per_step.append(hourly_solar[sidx])
+            val = hourly_solar[sidx]
+            if i == 0:
+                elapsed_frac = sunrise_hour * 2 - math.floor(sunrise_hour * 2)
+                val *= (1.0 - elapsed_frac) if elapsed_frac > 0 else 1.0
+            elif i == half_steps - 1:
+                f = sunset_hour * 2 - math.floor(sunset_hour * 2)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
 
         steps = half_steps  # override step count for the simulation loop
     elif hourly_solar and len(hourly_solar) == 24:
@@ -164,7 +173,15 @@ def simulate_daytime(
         solar_per_step = []
         for i in range(steps):
             hour_idx = (sr_int + i) % 24
-            solar_per_step.append(hourly_solar[hour_idx])
+            val = hourly_solar[hour_idx]
+            if i == 0:
+                elapsed_frac = sunrise_hour - math.floor(sunrise_hour)
+                val *= (1.0 - elapsed_frac) if elapsed_frac > 0 else 1.0
+            elif i == steps - 1:
+                f = sunset_hour - math.floor(sunset_hour)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
     else:
         # Fallback: sine curve distribution
         solar_factors = [math.sin((i + 0.5) / steps * math.pi) for i in range(steps)]
@@ -179,8 +196,11 @@ def simulate_daytime(
     morning_low = start_kwh
     net_positive_seen = False
 
+    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
+
     for i in range(steps):
-        battery += solar_per_step[i] - consumption_per_step[i]
+        consumption_dc = consumption_per_step[i] / eff
+        battery += solar_per_step[i] - consumption_dc
         if battery > battery_cap:
             surplus += battery - battery_cap
             battery = battery_cap
@@ -188,7 +208,7 @@ def simulate_daytime(
             battery = battery_floor
 
         if not net_positive_seen:
-            if solar_per_step[i] >= consumption_per_step[i]:
+            if solar_per_step[i] >= consumption_dc:
                 net_positive_seen = True
             else:
                 morning_low = min(morning_low, battery)
@@ -213,6 +233,8 @@ def calc_overnight_drain_hourly(
     main_cap: float,
     backup_mode: str = "always",
     target_kwh: float = 0.0,
+    inverter_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> float:
     """Calculate overnight drain using hourly consumption rates.
 
@@ -257,14 +279,15 @@ def calc_overnight_drain_hourly(
             else:
                 frac = 1.0
 
-            consumption = hourly_consumption[h % 24] * frac
+            eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
+            consumption_dc = hourly_consumption[h % 24] * frac / eff
 
             if use_backup and br > 0 and backup_kw > 0 and _is_backup_active(h):
                 backup_energy = min(br, backup_kw * frac)
-                consumption -= backup_energy
+                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
                 br -= backup_energy
 
-            bat -= consumption
+            bat -= consumption_dc
             if bat < main_floor_kwh:
                 bat = main_floor_kwh
             if bat > main_cap:
@@ -355,9 +378,11 @@ def calc_overnight_drain_no_backup(
     params: OvernightParams,
     main_floor_kwh: float,
     main_cap: float,
+    inverter_efficiency: float = 1.0,
 ) -> float:
     """Calculate sunrise kWh with NO backup assist."""
-    main_kwh = sunset_kwh - (params.avg_overnight_kw * params.overnight_hours)
+    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
+    main_kwh = sunset_kwh - (params.avg_overnight_kw * params.overnight_hours / eff)
     return max(main_floor_kwh, min(main_cap, main_kwh))
 
 
@@ -368,26 +393,29 @@ def calc_overnight_drain_with_backup(
     params: OvernightParams,
     main_floor_kwh: float,
     main_cap: float,
+    inverter_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> float:
     """Calculate sunrise kWh with backup assist (always mode)."""
     avg_kw = params.avg_overnight_kw
+    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
 
     # Phase 1: sunset → backup activation, main covers all load
-    main_kwh = sunset_kwh - (avg_kw * params.hours_sunset_to_activation)
+    main_kwh = sunset_kwh - (avg_kw * params.hours_sunset_to_activation / eff)
 
     # Phase 2: activation → sunrise, backup assists
     h2 = params.hours_activation_to_sunrise
     if backup_charged_kwh > 0 and backup_kw > 0 and h2 > 0:
         backup_hours = backup_charged_kwh / backup_kw
-        net_kw = backup_kw - avg_kw
+        net_kw = backup_kw * backup_discharge_efficiency / eff - avg_kw / eff
         if backup_hours >= h2:
             main_kwh += net_kw * h2
         else:
             main_kwh += net_kw * backup_hours
             remaining = h2 - backup_hours
-            main_kwh -= avg_kw * remaining
+            main_kwh -= avg_kw / eff * remaining
     else:
-        main_kwh -= avg_kw * h2
+        main_kwh -= avg_kw / eff * h2
 
     return max(main_floor_kwh, min(main_cap, main_kwh))
 
@@ -401,6 +429,8 @@ def calc_overnight_drain(
     main_cap: float,
     backup_mode: str = "always",
     target_kwh: float = 0.0,
+    inverter_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> float:
     """Calculate main battery kWh at sunrise after overnight drain.
 
@@ -413,11 +443,14 @@ def calc_overnight_drain(
         return calc_overnight_drain_with_backup(
             sunset_kwh, backup_charged_kwh, backup_kw,
             params, main_floor_kwh, main_cap,
+            inverter_efficiency=inverter_efficiency,
+            backup_discharge_efficiency=backup_discharge_efficiency,
         )
 
     # Target-based mode: first calculate without backup
     sunrise_no_backup = calc_overnight_drain_no_backup(
         sunset_kwh, params, main_floor_kwh, main_cap,
+        inverter_efficiency=inverter_efficiency,
     )
 
     if sunrise_no_backup >= target_kwh or target_kwh <= 0:
@@ -428,6 +461,8 @@ def calc_overnight_drain(
     sunrise_with_backup = calc_overnight_drain_with_backup(
         sunset_kwh, backup_charged_kwh, backup_kw,
         params, main_floor_kwh, main_cap,
+        inverter_efficiency=inverter_efficiency,
+        backup_discharge_efficiency=backup_discharge_efficiency,
     )
 
     # Cap at target — don't use more backup than needed
@@ -453,6 +488,9 @@ def predict_day1_daytime(
     current_hour: float = 12.0,
     sunset_hour: float = 18.0,
     hourly_solar: list[float] | None = None,
+    inverter_efficiency: float = 1.0,
+    backup_charge_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
     """Day 1 daytime prediction: current SoC + remaining solar → sunset → overnight.
 
@@ -544,13 +582,38 @@ def predict_day1_daytime(
         solar_per_step = []
         for i in range(remaining_steps):
             sidx = (cur_half + i) % 48
-            solar_per_step.append(hourly_solar[sidx])
+            val = hourly_solar[sidx]
+            if remaining_steps == 1:
+                # Single step: scale by actual time span
+                frac = (sunset_hour - current_hour) / 0.5
+                val *= max(0, min(1, frac))
+            elif i == 0:
+                # First step: scale by fraction of half-hour remaining
+                elapsed_frac = current_hour * 2 - math.floor(current_hour * 2)
+                val *= (1.0 - elapsed_frac)
+            elif i == remaining_steps - 1:
+                # Last step: scale by fraction of half-hour before sunset
+                f = sunset_hour * 2 - math.floor(sunset_hour * 2)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
     elif hourly_solar and len(hourly_solar) == 24:
         # Hourly Solcast forecast for remaining hours
         solar_per_step = []
         for i in range(remaining_steps):
             hour_idx = (current_h + i) % 24
-            solar_per_step.append(hourly_solar[hour_idx])
+            val = hourly_solar[hour_idx]
+            if remaining_steps == 1:
+                frac = sunset_hour - current_hour
+                val *= max(0, min(1, frac))
+            elif i == 0:
+                elapsed_frac = current_hour - math.floor(current_hour)
+                val *= (1.0 - elapsed_frac)
+            elif i == remaining_steps - 1:
+                f = sunset_hour - math.floor(sunset_hour)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
     else:
         # Fallback: distribute remaining_solar using tail of sine curve
         solar_factors = []
@@ -570,11 +633,12 @@ def predict_day1_daytime(
     surplus = 0.0
     total_consumption = 0.0
     total_solar = 0.0
+    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
 
     for i in range(remaining_steps):
         total_consumption += consumption_per_step[i]
         total_solar += solar_per_step[i]
-        battery += solar_per_step[i] - consumption_per_step[i]
+        battery += solar_per_step[i] - consumption_per_step[i] / eff
         if battery > main.capacity_kwh:
             surplus += battery - main.capacity_kwh
             battery = main.capacity_kwh
@@ -588,7 +652,7 @@ def predict_day1_daytime(
     if backup.enabled:
         backup_current = max(0, (backup_soc_pct - backup.floor_percent) / 100 * backup.capacity_kwh)
 
-    backup_charged = min(backup.usable_kwh, backup_current + surplus) if backup.enabled else 0.0
+    backup_charged = min(backup.usable_kwh, backup_current + surplus * backup_charge_efficiency) if backup.enabled else 0.0
 
     # Overnight drain
     if hourly_consumption and len(hourly_consumption) == 24:
@@ -604,6 +668,8 @@ def predict_day1_daytime(
             main_cap=main.capacity_kwh,
             backup_mode=backup.mode if backup.enabled else "always",
             target_kwh=target_kwh,
+            inverter_efficiency=inverter_efficiency,
+            backup_discharge_efficiency=backup_discharge_efficiency,
         )
     else:
         sunrise_kwh = calc_overnight_drain(
@@ -615,6 +681,8 @@ def predict_day1_daytime(
             main_cap=main.capacity_kwh,
             backup_mode=backup.mode if backup.enabled else "always",
             target_kwh=target_kwh,
+            inverter_efficiency=inverter_efficiency,
+            backup_discharge_efficiency=backup_discharge_efficiency,
         )
 
     return DayResult(
@@ -638,9 +706,12 @@ def predict_day1_nighttime(
     now_dt: datetime,
     overnight_params: OvernightParams,
     main: BatteryConfig,
+    inverter_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
     """Day 1 nighttime prediction: current SoC - average drain + live backup."""
     avg_kw = overnight_params.avg_overnight_kw
+    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
 
     # Calculate phase split from now
     two_am = now_dt.replace(hour=activation_hour, minute=0, second=0, microsecond=0)
@@ -659,21 +730,21 @@ def predict_day1_nighttime(
 
     # Phase 1: now → activation, main covers all
     if hours_phase1 > 0:
-        main_kwh -= avg_kw * hours_phase1
+        main_kwh -= avg_kw / eff * hours_phase1
 
     # Phase 2: activation → sunrise, backup assists
     if hours_phase2 > 0:
         if backup_available_kwh <= 0 or backup_kw <= 0:
-            main_kwh -= avg_kw * hours_phase2
+            main_kwh -= avg_kw / eff * hours_phase2
         else:
             backup_hours = backup_available_kwh / backup_kw
-            net_kw = backup_kw - avg_kw
+            net_kw = backup_kw * backup_discharge_efficiency / eff - avg_kw / eff
             if backup_hours >= hours_phase2:
                 main_kwh += net_kw * hours_phase2
             else:
                 main_kwh += net_kw * backup_hours
                 remaining = hours_phase2 - backup_hours
-                main_kwh -= avg_kw * remaining
+                main_kwh -= avg_kw / eff * remaining
 
     main_kwh = max(main.floor_kwh, min(main.capacity_kwh, main_kwh))
 
@@ -696,6 +767,9 @@ def predict_future_day(
     sunrise_hour: float = 6.0,
     sunset_hour: float = 18.0,
     hourly_solar: list[float] | None = None,
+    inverter_efficiency: float = 1.0,
+    backup_charge_efficiency: float = 1.0,
+    backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
     """Predict SoC for Days 2-7 using hourly solar + consumption data."""
     daytime_kwh = max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)
@@ -715,11 +789,12 @@ def predict_future_day(
         sunrise_hour=sunrise_hour,
         hourly_solar=hourly_solar,
         sunset_hour=sunset_hour,
+        inverter_efficiency=inverter_efficiency,
     )
     sunset_kwh = sim.sunset_kwh
 
     # Backup charges from solar surplus (energy clipped when battery hit cap)
-    backup_charged = min(backup.usable_kwh, sim.surplus_kwh) if backup.enabled else 0.0
+    backup_charged = min(backup.usable_kwh, sim.surplus_kwh * backup_charge_efficiency) if backup.enabled else 0.0
 
     # Use hourly overnight drain if hourly data available
     if hourly_consumption and len(hourly_consumption) == 24:
@@ -735,6 +810,8 @@ def predict_future_day(
             main_cap=main.capacity_kwh,
             backup_mode=backup.mode if backup.enabled else "always",
             target_kwh=target_kwh,
+            inverter_efficiency=inverter_efficiency,
+            backup_discharge_efficiency=backup_discharge_efficiency,
         )
     else:
         sunrise_kwh = calc_overnight_drain(
@@ -746,6 +823,8 @@ def predict_future_day(
             main_cap=main.capacity_kwh,
             backup_mode=backup.mode if backup.enabled else "always",
             target_kwh=target_kwh,
+            inverter_efficiency=inverter_efficiency,
+            backup_discharge_efficiency=backup_discharge_efficiency,
         )
 
     return DayResult(
