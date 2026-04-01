@@ -261,44 +261,52 @@ def calc_overnight_drain_hourly(
         else:
             return h24 >= backup_activation_hour or h24 < sr_int
 
+    def _drain_hour(bat: float, br: float, h: int, frac: float, use_backup: bool) -> tuple[float, float]:
+        """Drain one hour of consumption from battery."""
+        eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
+        consumption_dc = hourly_consumption[h % 24] * frac / eff
+
+        if use_backup and br > 0 and backup_kw > 0 and _is_backup_active(h):
+            backup_energy = min(br, backup_kw * frac)
+            consumption_dc -= backup_energy * backup_discharge_efficiency / eff
+            br -= backup_energy
+
+        bat -= consumption_dc
+        if bat < main_floor_kwh:
+            bat = main_floor_kwh
+        if bat > main_cap:
+            bat = main_cap
+        return bat, br
+
     def _run_overnight(use_backup: bool) -> float:
         """Simulate overnight drain, optionally with backup assist."""
         nonlocal backup_remaining
         bat = sunset_kwh
         br = backup_charged_kwh if use_backup else 0.0
         h = ss_int
-        for _ in range(25):  # Max 24 iterations + safety
-            next_h = (h + 1) % 24
-            # Fractional first/last hours
-            if h == ss_int and next_h == sr_int:
-                # Single hour overnight (extreme edge case)
-                frac = max(0, sunrise_hour - sunset_hour) if sunrise_hour > sunset_hour else 1.0
-            elif h == ss_int:
-                frac = 1.0 - (sunset_hour - math.floor(sunset_hour))
-            elif next_h == sr_int:
-                frac = sunrise_hour - math.floor(sunrise_hour)
-                if frac <= 0:
-                    frac = 1.0
-            else:
-                frac = 1.0
 
-            eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
-            consumption_dc = hourly_consumption[h % 24] * frac / eff
+        # First hour: fractional entry
+        entry_frac = 1.0 - (sunset_hour - math.floor(sunset_hour))
+        if h == sr_int:
+            # Single hour overnight — just drain the overlap
+            frac = max(0, sunrise_hour - sunset_hour)
+            bat, br = _drain_hour(bat, br, h, frac, use_backup)
+        else:
+            bat, br = _drain_hour(bat, br, h, entry_frac, use_backup)
+            h = (h + 1) % 24
 
-            if use_backup and br > 0 and backup_kw > 0 and _is_backup_active(h):
-                backup_energy = min(br, backup_kw * frac)
-                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
-                br -= backup_energy
+            # Middle hours: full consumption
+            for _ in range(24):
+                if h == sr_int:
+                    break
+                bat, br = _drain_hour(bat, br, h, 1.0, use_backup)
+                h = (h + 1) % 24
 
-            bat -= consumption_dc
-            if bat < main_floor_kwh:
-                bat = main_floor_kwh
-            if bat > main_cap:
-                bat = main_cap
-
-            h = next_h
+            # Sunrise hour: fractional exit
             if h == sr_int:
-                break
+                exit_frac = sunrise_hour - math.floor(sunrise_hour)
+                if exit_frac > 0:
+                    bat, br = _drain_hour(bat, br, h, exit_frac, use_backup)
 
         if use_backup:
             backup_remaining = br
@@ -730,52 +738,43 @@ def predict_day1_nighttime(
             else:
                 return h24 >= activation_hour or h24 < sr_int
 
+        def _drain_hour_d1(bat: float, br: float, h: int, frac: float) -> tuple[float, float]:
+            """Drain one hour of consumption from battery."""
+            consumption_dc = hourly_consumption[h % 24] * frac / eff
+            if br > 0 and backup_kw > 0 and _is_backup_active(h):
+                backup_energy = min(br, backup_kw * frac)
+                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
+                br -= backup_energy
+            bat -= consumption_dc
+            bat = max(main.floor_kwh, min(main.capacity_kwh, bat))
+            return bat, br
+
         bat = current_kwh
         br = backup_available_kwh
 
-        # When current hour == sunrise hour, only drain the remaining fraction
         if now_int == sr_int:
-            remaining_frac = max(0, sunrise_hour - current_hour)
-            if remaining_frac > 0:
-                consumption_dc = hourly_consumption[now_int % 24] * remaining_frac / eff
-                if br > 0 and backup_kw > 0 and _is_backup_active(now_int):
-                    backup_energy = min(br, backup_kw * remaining_frac)
-                    consumption_dc -= backup_energy * backup_discharge_efficiency / eff
-                bat -= consumption_dc
-                bat = max(main.floor_kwh, min(main.capacity_kwh, bat))
+            # Same hour as sunrise — drain only the remaining fraction
+            frac = max(0, sunrise_hour - current_hour)
+            if frac > 0:
+                bat, br = _drain_hour_d1(bat, br, now_int, frac)
         else:
-            h = now_int
-            for _ in range(25):
-                next_h = (h + 1) % 24
-                # Fractional first/last hours
-                if h == now_int and next_h == sr_int:
-                    # Single hour: use actual remaining time
-                    frac = max(0, sunrise_hour - current_hour)
-                elif h == now_int:
-                    frac = 1.0 - (current_hour - math.floor(current_hour))
-                elif next_h == sr_int:
-                    frac = sunrise_hour - math.floor(sunrise_hour)
-                    if frac <= 0:
-                        frac = 1.0
-                else:
-                    frac = 1.0
+            # First hour: fractional entry
+            entry_frac = 1.0 - (current_hour - math.floor(current_hour))
+            bat, br = _drain_hour_d1(bat, br, now_int, entry_frac)
+            h = (now_int + 1) % 24
 
-                consumption_dc = hourly_consumption[h % 24] * frac / eff
-
-                if br > 0 and backup_kw > 0 and _is_backup_active(h):
-                    backup_energy = min(br, backup_kw * frac)
-                    consumption_dc -= backup_energy * backup_discharge_efficiency / eff
-                    br -= backup_energy
-
-                bat -= consumption_dc
-                if bat < main.floor_kwh:
-                    bat = main.floor_kwh
-                if bat > main.capacity_kwh:
-                    bat = main.capacity_kwh
-
-                h = next_h
+            # Middle hours: full consumption
+            for _ in range(24):
                 if h == sr_int:
                     break
+                bat, br = _drain_hour_d1(bat, br, h, 1.0)
+                h = (h + 1) % 24
+
+            # Sunrise hour: fractional exit
+            if h == sr_int:
+                exit_frac = sunrise_hour - math.floor(sunrise_hour)
+                if exit_frac > 0:
+                    bat, br = _drain_hour_d1(bat, br, h, exit_frac)
 
         main_kwh = bat
     else:
