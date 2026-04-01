@@ -42,6 +42,40 @@ CONF_SOLCAST_DAY_7 = "solcast_day_7"
 CONF_MAIN_INVERTER_EFFICIENCY = "main_inverter_efficiency"
 CONF_GRID_POWER_ENTITY = "grid_power_entity"
 
+# Solar forecast source
+CONF_SOLAR_SOURCE = "solar_source"
+CONF_SOLAR_CONFIG_ENTRY = "solar_config_entry"
+SOLAR_SOURCE_SOLCAST = "solcast"
+SOLAR_SOURCE_OPEN_METEO = "open_meteo"
+SOLAR_SOURCE_MANUAL = "manual"
+
+# Known solar forecast integration domains
+SOLAR_DOMAINS = {
+    "solcast_solar": SOLAR_SOURCE_SOLCAST,
+    "open_meteo_solar_forecast": SOLAR_SOURCE_OPEN_METEO,
+}
+
+# Auto-discovered solar entity config keys (stored after discovery)
+CONF_SOLAR_ENTITY_REMAINING = "solar_entity_remaining"
+CONF_SOLAR_ENTITY_TODAY = "solar_entity_today"
+CONF_SOLAR_ENTITY_TOMORROW = "solar_entity_tomorrow"
+CONF_SOLAR_ENTITY_DAY_3 = "solar_entity_day_3"
+CONF_SOLAR_ENTITY_DAY_4 = "solar_entity_day_4"
+CONF_SOLAR_ENTITY_DAY_5 = "solar_entity_day_5"
+CONF_SOLAR_ENTITY_DAY_6 = "solar_entity_day_6"
+CONF_SOLAR_ENTITY_DAY_7 = "solar_entity_day_7"
+
+# Mapping day number → auto-discovered config key
+SOLAR_DAY_MAP = {
+    1: CONF_SOLAR_ENTITY_TODAY,
+    2: CONF_SOLAR_ENTITY_TOMORROW,
+    3: CONF_SOLAR_ENTITY_DAY_3,
+    4: CONF_SOLAR_ENTITY_DAY_4,
+    5: CONF_SOLAR_ENTITY_DAY_5,
+    6: CONF_SOLAR_ENTITY_DAY_6,
+    7: CONF_SOLAR_ENTITY_DAY_7,
+}
+
 CONF_FORECAST_DAYS = "forecast_days"
 CONF_TARGET_SOC = "target_soc"
 

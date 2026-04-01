@@ -35,9 +35,16 @@
           "backup_discharge_efficiency": "Discharge efficiency (%)"
         }
       },
+      "solar_source": {
+        "title": "Solar Forecast",
+        "description": "Select your solar forecast integration. Entities will be discovered automatically. Choose 'Manual' to select entities individually.",
+        "data": {
+          "solar_config_entry": "Solar forecast integration"
+        }
+      },
       "solcast": {
-        "title": "Solcast Forecast Entities",
-        "description": "Select your Solcast PV forecast sensors for each forecast day.",
+        "title": "Solar Forecast Entities (Manual)",
+        "description": "Select your solar PV forecast sensors for each forecast day.",
         "data": {
           "solcast_remaining_today": "Remaining today",
           "solcast_forecast_today": "Forecast today (with hourly detail)",
@@ -98,9 +105,16 @@
           "backup_discharge_efficiency": "Discharge efficiency (%)"
         }
       },
+      "solar_source": {
+        "title": "Solar Forecast",
+        "description": "Select your solar forecast integration, or choose 'Manual' to select entities individually.",
+        "data": {
+          "solar_config_entry": "Solar forecast integration"
+        }
+      },
       "solcast": {
-        "title": "Solcast Forecast Entities",
-        "description": "Select your Solcast PV forecast sensors.",
+        "title": "Solar Forecast Entities (Manual)",
+        "description": "Select your solar PV forecast sensors.",
         "data": {
           "solcast_remaining_today": "Remaining today",
           "solcast_forecast_today": "Forecast today (with hourly detail)",

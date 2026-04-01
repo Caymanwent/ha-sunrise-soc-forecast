@@ -130,8 +130,44 @@ def simulate_daytime(
         flat_rate = daytime_consumption_kwh / steps if steps > 0 else 0
         consumption_per_step = [flat_rate] * steps
 
-    # Solar production per step: use Solcast data if available, else sine curve
-    if hourly_solar and len(hourly_solar) == 48:
+    # Solar production per step: use forecast data if available, else sine curve
+    if hourly_solar and len(hourly_solar) == 96:
+        # Quarter-hourly forecast (Open-Meteo): 96 entries, run 4 steps per hour
+        sr_qtr = int(math.floor(sunrise_hour * 4))
+        ss_qtr = int(math.ceil(sunset_hour * 4))
+        qtr_steps = max(1, ss_qtr - sr_qtr)
+
+        # Rebuild consumption for quarter-hour steps
+        if hourly_consumption and len(hourly_consumption) == 24:
+            consumption_per_step = []
+            for i in range(qtr_steps):
+                hidx = (sr_qtr + i) // 4 % 24
+                frac = 0.25  # quarter-hour = quarter the hourly rate
+                if i == 0:
+                    frac *= (1.0 - (sunrise_hour * 4 - math.floor(sunrise_hour * 4)))
+                elif i == qtr_steps - 1:
+                    f = sunset_hour * 4 - math.floor(sunset_hour * 4)
+                    frac *= f if f > 0 else 1.0
+                consumption_per_step.append(hourly_consumption[hidx] * frac)
+        else:
+            flat_qtr = daytime_consumption_kwh / qtr_steps if qtr_steps > 0 else 0
+            consumption_per_step = [flat_qtr] * qtr_steps
+
+        solar_per_step = []
+        for i in range(qtr_steps):
+            sidx = (sr_qtr + i) % 96
+            val = hourly_solar[sidx]
+            if i == 0:
+                elapsed_frac = sunrise_hour * 4 - math.floor(sunrise_hour * 4)
+                val *= (1.0 - elapsed_frac) if elapsed_frac > 0 else 1.0
+            elif i == qtr_steps - 1:
+                f = sunset_hour * 4 - math.floor(sunset_hour * 4)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
+
+        steps = qtr_steps
+    elif hourly_solar and len(hourly_solar) == 48:
         # Half-hourly Solcast forecast: 48 entries, run 2 steps per hour
         sr_half = int(math.floor(sunrise_hour * 2))
         ss_half = int(math.ceil(sunset_hour * 2))
@@ -563,8 +599,49 @@ def predict_day1_daytime(
                 frac = 1.0
             consumption_per_step.append(flat_rate * frac)
 
-    # Solar per step: use Solcast data if available, else sine curve
-    if hourly_solar and len(hourly_solar) == 48:
+    # Solar per step: use forecast data if available, else sine curve
+    if hourly_solar and len(hourly_solar) == 96:
+        # Quarter-hourly (Open-Meteo): rebuild with 15-min steps from current time
+        cur_qtr = int(math.floor(current_hour * 4))
+        ss_qtr = int(math.ceil(sunset_hour * 4))
+        remaining_steps = max(1, ss_qtr - cur_qtr)
+
+        # Rebuild consumption for quarter-hour steps
+        if hourly_consumption and len(hourly_consumption) == 24:
+            consumption_per_step = []
+            for i in range(remaining_steps):
+                hidx = (cur_qtr + i) // 4 % 24
+                frac = 0.25
+                if remaining_steps == 1:
+                    frac = sunset_hour - current_hour
+                    if frac <= 0:
+                        frac = 0.01
+                elif i == 0:
+                    frac *= (1.0 - (current_hour * 4 - math.floor(current_hour * 4)))
+                elif i == remaining_steps - 1:
+                    f = sunset_hour * 4 - math.floor(sunset_hour * 4)
+                    frac *= f if f > 0 else 1.0
+                consumption_per_step.append(hourly_consumption[hidx] * frac)
+        else:
+            flat_qtr = (max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)) / remaining_steps if remaining_steps > 0 else 0
+            consumption_per_step = [flat_qtr] * remaining_steps
+
+        solar_per_step = []
+        for i in range(remaining_steps):
+            sidx = (cur_qtr + i) % 96
+            val = hourly_solar[sidx]
+            if remaining_steps == 1:
+                frac = (sunset_hour - current_hour) / 0.25
+                val *= max(0, min(1, frac))
+            elif i == 0:
+                elapsed_frac = current_hour * 4 - math.floor(current_hour * 4)
+                val *= (1.0 - elapsed_frac)
+            elif i == remaining_steps - 1:
+                f = sunset_hour * 4 - math.floor(sunset_hour * 4)
+                if f > 0:
+                    val *= f
+            solar_per_step.append(val)
+    elif hourly_solar and len(hourly_solar) == 48:
         # Half-hourly Solcast: rebuild with half-hour steps from current time
         cur_half = int(math.floor(current_hour * 2))
         ss_half = int(math.ceil(sunset_hour * 2))

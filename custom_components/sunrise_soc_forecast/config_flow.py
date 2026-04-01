@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -40,6 +42,18 @@ from .const import (
     BACKUP_MODE_TARGET,
     CONF_FORECAST_DAYS,
     CONF_TARGET_SOC,
+    CONF_SOLAR_SOURCE,
+    CONF_SOLAR_CONFIG_ENTRY,
+    CONF_SOLAR_ENTITY_REMAINING,
+    CONF_SOLAR_ENTITY_TODAY,
+    CONF_SOLAR_ENTITY_TOMORROW,
+    CONF_SOLAR_ENTITY_DAY_3,
+    CONF_SOLAR_ENTITY_DAY_4,
+    CONF_SOLAR_ENTITY_DAY_5,
+    CONF_SOLAR_ENTITY_DAY_6,
+    CONF_SOLAR_ENTITY_DAY_7,
+    SOLAR_SOURCE_MANUAL,
+    SOLAR_DOMAINS,
     DEFAULT_MAIN_CAPACITY,
     DEFAULT_MAIN_FLOOR,
     DEFAULT_BACKUP_CAPACITY,
@@ -55,6 +69,9 @@ from .const import (
     DEFAULT_BACKUP_CHARGE_EFFICIENCY,
     DEFAULT_BACKUP_DISCHARGE_EFFICIENCY,
 )
+from .solar_discovery import discover_solar_entities
+
+_LOGGER = logging.getLogger(__name__)
 
 ENTITY_SELECTOR = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
@@ -104,7 +121,7 @@ class SunriseSocForecastConfigFlow(
             self._data.update(user_input)
             if user_input.get(CONF_BACKUP_ENABLED, False):
                 return await self.async_step_backup_details()
-            return await self.async_step_solcast()
+            return await self.async_step_solar_source()
 
         return self.async_show_form(
             step_id="backup",
@@ -119,7 +136,7 @@ class SunriseSocForecastConfigFlow(
         """Step 2b: Backup battery details."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_solcast()
+            return await self.async_step_solar_source()
 
         return self.async_show_form(
             step_id="backup_details",
@@ -161,8 +178,97 @@ class SunriseSocForecastConfigFlow(
             ),
         )
 
+    def _find_solar_integrations(self) -> list[selector.SelectOptionDict]:
+        """Find installed solar forecast integrations."""
+        options = []
+        for entry in self.hass.config_entries.async_entries():
+            if entry.domain in SOLAR_DOMAINS:
+                label = f"{entry.title} ({entry.domain})"
+                options.append(
+                    selector.SelectOptionDict(value=entry.entry_id, label=label)
+                )
+        options.append(
+            selector.SelectOptionDict(value=SOLAR_SOURCE_MANUAL, label="Manual entity selection")
+        )
+        return options
+
+    async def async_step_solar_source(self, user_input=None):
+        """Step 3: Solar forecast source selection."""
+        if user_input is not None:
+            selected = user_input.get(CONF_SOLAR_CONFIG_ENTRY, SOLAR_SOURCE_MANUAL)
+            if selected == SOLAR_SOURCE_MANUAL:
+                self._data[CONF_SOLAR_SOURCE] = SOLAR_SOURCE_MANUAL
+                return await self.async_step_solcast()
+
+            # Auto-discover entities from selected integration
+            entry = self.hass.config_entries.async_get_entry(selected)
+            if entry:
+                self._data[CONF_SOLAR_SOURCE] = SOLAR_DOMAINS.get(entry.domain, SOLAR_SOURCE_MANUAL)
+                self._data[CONF_SOLAR_CONFIG_ENTRY] = selected
+
+            discovered = discover_solar_entities(self.hass, selected)
+            if not discovered.get("today") and not discovered.get("tomorrow"):
+                # Discovery failed — fall back to manual
+                _LOGGER.warning("Solar entity discovery found no forecast entities, falling back to manual")
+                self._data[CONF_SOLAR_SOURCE] = SOLAR_SOURCE_MANUAL
+                return await self.async_step_solcast()
+
+            # Map discovered entities to config keys
+            role_to_conf = {
+                "remaining": CONF_SOLAR_ENTITY_REMAINING,
+                "today": CONF_SOLAR_ENTITY_TODAY,
+                "tomorrow": CONF_SOLAR_ENTITY_TOMORROW,
+                "day_3": CONF_SOLAR_ENTITY_DAY_3,
+                "day_4": CONF_SOLAR_ENTITY_DAY_4,
+                "day_5": CONF_SOLAR_ENTITY_DAY_5,
+                "day_6": CONF_SOLAR_ENTITY_DAY_6,
+                "day_7": CONF_SOLAR_ENTITY_DAY_7,
+            }
+            for role, entity_id in discovered.items():
+                conf_key = role_to_conf.get(role)
+                if conf_key:
+                    self._data[conf_key] = entity_id
+
+            # Also set legacy Solcast keys for backward compatibility
+            if discovered.get("remaining"):
+                self._data[CONF_SOLCAST_REMAINING] = discovered["remaining"]
+            if discovered.get("today"):
+                self._data[CONF_SOLCAST_FORECAST_TODAY] = discovered["today"]
+            if discovered.get("tomorrow"):
+                self._data[CONF_SOLCAST_TOMORROW] = discovered["tomorrow"]
+            for d in range(3, 8):
+                role = f"day_{d}"
+                conf = {3: CONF_SOLCAST_DAY_3, 4: CONF_SOLCAST_DAY_4, 5: CONF_SOLCAST_DAY_5,
+                        6: CONF_SOLCAST_DAY_6, 7: CONF_SOLCAST_DAY_7}.get(d)
+                if conf and discovered.get(role):
+                    self._data[conf] = discovered[role]
+
+            _LOGGER.info("Solar discovery found: %s", {k: v for k, v in discovered.items()})
+            return await self.async_step_options()
+
+        solar_options = self._find_solar_integrations()
+
+        # If only manual option available, skip straight to manual
+        if len(solar_options) <= 1:
+            self._data[CONF_SOLAR_SOURCE] = SOLAR_SOURCE_MANUAL
+            return await self.async_step_solcast()
+
+        return self.async_show_form(
+            step_id="solar_source",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SOLAR_CONFIG_ENTRY): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=solar_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+        )
+
     async def async_step_solcast(self, user_input=None):
-        """Step 3: Solcast entity configuration."""
+        """Step 3b: Manual Solcast entity configuration (fallback)."""
         if user_input is not None:
             self._data.update(user_input)
             return await self.async_step_options()

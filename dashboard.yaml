@@ -1,13 +1,19 @@
 type: markdown
 content: |
-  {% set days = [1,2,3,4,5,6,7] -%}
+  {% set pre_sunrise = state_attr('sensor.predicted_sunrise_soc_day_1', 'mode') == 'nighttime' and now().hour < 12 -%}
   | Day | Status | SoC % | kWh | AM Low | Solcast | Daytime | Backup | Grid Need |
   |-----|--------|-------|-----|--------|---------|---------|--------|-----------|
-  {%- for d in days %}
-  {%- set entity = 'sensor.predicted_sunrise_soc_day_' ~ d %}
+  {%- set entity = 'sensor.predicted_sunrise_soc_day_1' %}
   {%- set soc = states(entity) | float(0) %}
   {%- if soc > 0 %}
-  | {% if d == 1 %}{% if is_state('binary_sensor.is_overnight', 'on') and now().hour < 12 %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d < 7 %}{{ state_attr('sensor.predicted_sunrise_soc_day_' ~ (d+1), 'morning_low_pct') }}%{% else %}—{% endif %} | {% if d == 1 %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}{{ state_attr(entity, 'solcast_kwh') }}{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
+  | {% if pre_sunrise %}This Morning{% else %}Tomorrow{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {{ state_attr('sensor.predicted_sunrise_soc_day_2', 'morning_low_pct') }}% | {% if state_attr(entity, 'mode') == 'daytime' %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}0{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
+  {%- endif %}
+  {%- for d in range(2, 8) %}
+  {%- set entity = 'sensor.predicted_sunrise_soc_day_' ~ d %}
+  {%- set soc = states(entity) | float(0) %}
+  {%- set date = (now() + timedelta(days=d - 1 if pre_sunrise else d)).strftime('%a %-d %b') %}
+  {%- if soc > 0 %}
+  | {{ date }} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d < 7 %}{{ state_attr('sensor.predicted_sunrise_soc_day_' ~ (d+1), 'morning_low_pct') }}%{% else %}—{% endif %} | {{ state_attr(entity, 'solcast_kwh') }} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
   {%- endif %}
   {%- endfor %}
 

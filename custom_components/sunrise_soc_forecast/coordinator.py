@@ -47,11 +47,13 @@ from .const import (
     CONF_FORECAST_DAYS,
     CONF_SOLCAST_REMAINING,
     CONF_SOLCAST_FORECAST_TODAY,
+    CONF_SOLAR_ENTITY_REMAINING,
     CONF_GRID_POWER_ENTITY,
     CONF_TARGET_SOC,
     DEFAULT_TARGET_SOC,
     SOLCAST_STANDARD,
     SOLCAST_SHIFTED,
+    SOLAR_DAY_MAP,
     DEFAULT_MAIN_CAPACITY,
     DEFAULT_MAIN_FLOOR,
     DEFAULT_BACKUP_CAPACITY,
@@ -348,22 +350,32 @@ class SunriseSocCoordinator:
 
         return averages
 
-    def get_solcast_kwh(self, day: int) -> float:
-        """Get Solcast daily total for a day, handling post-midnight shift."""
-        now = dt_util.now()
-        post_midnight = self.is_overnight and now.hour < 12
-
-        mapping = SOLCAST_SHIFTED if post_midnight else SOLCAST_STANDARD
-
-        conf_key = mapping.get(day)
-        if conf_key is None:
-            return 0.0
-
-        entity_id = self.config.get(conf_key, "")
+    def get_solar_kwh(self, day: int) -> float:
+        """Get solar daily total for a day."""
+        entity_id = self._get_solar_entity_id(day)
         return self.get_state_float(entity_id)
 
-    def _get_solcast_entity_id(self, day: int) -> str:
-        """Get the Solcast entity ID for a given day."""
+    # Keep old name as alias
+    def get_solcast_kwh(self, day: int) -> float:
+        """Backward-compatible alias."""
+        return self.get_solar_kwh(day)
+
+    def _get_solar_entity_id(self, day: int) -> str:
+        """Get the solar forecast entity ID for a given day.
+
+        Checks auto-discovered keys first, then falls back to legacy Solcast keys.
+        Handles post-midnight shift for legacy Solcast mapping.
+        """
+        from .const import SOLAR_DAY_MAP
+
+        # Try auto-discovered entity first
+        solar_conf = SOLAR_DAY_MAP.get(day)
+        if solar_conf:
+            entity_id = self.config.get(solar_conf, "")
+            if entity_id:
+                return entity_id
+
+        # Fall back to legacy Solcast keys
         if day == 1:
             return self.config.get(CONF_SOLCAST_FORECAST_TODAY, "")
         now = dt_util.now()
@@ -374,14 +386,23 @@ class SunriseSocCoordinator:
             return ""
         return self.config.get(conf_key, "")
 
-    def get_solcast_hourly(self, day: int) -> list[float] | None:
-        """Get half-hourly solar forecast from detailedForecast attribute.
+    # Keep old name as alias
+    def _get_solcast_entity_id(self, day: int) -> str:
+        """Backward-compatible alias."""
+        return self._get_solar_entity_id(day)
 
-        Returns a 48-element list of pv_estimate values (kWh per half-hour),
-        or None if detailedForecast isn't available.
-        Falls back to detailedHourly (24 entries split into 48) if detailedForecast unavailable.
+    def get_solar_hourly(self, day: int) -> list[float] | None:
+        """Get solar forecast as a time-series array.
+
+        Returns:
+            96-element list (kWh per 15 min) for Open-Meteo watts data
+            48-element list (kWh per 30 min) for Solcast detailedForecast
+            24-element list (kWh per hour) for Solcast detailedHourly or Open-Meteo wh_period
+            None if no hourly data available
+
+        The calculator handles all three lengths with appropriate step sizes.
         """
-        entity_id = self._get_solcast_entity_id(day)
+        entity_id = self._get_solar_entity_id(day)
         if not entity_id:
             return None
 
@@ -389,15 +410,31 @@ class SunriseSocCoordinator:
         if state is None:
             return None
 
-        # Try detailedForecast first (48 half-hour entries)
-        detailed = state.attributes.get("detailedForecast")
+        attrs = state.attributes
+
+        # Open-Meteo: watts attribute (96 quarter-hourly entries in W)
+        watts = attrs.get("watts")
+        if watts and isinstance(watts, dict) and len(watts) >= 90:
+            quarter_hourly = [0.0] * 96
+            for ts_str, w_val in watts.items():
+                try:
+                    hour, minute = self._parse_time_from_key(ts_str)
+                    idx = hour * 4 + minute // 15
+                    if 0 <= idx < 96:
+                        quarter_hourly[idx] = float(w_val) / 1000.0 * 0.25  # W → kWh per 15 min
+                except (ValueError, TypeError, IndexError):
+                    continue
+            if any(v > 0 for v in quarter_hourly):
+                return quarter_hourly
+
+        # Solcast: detailedForecast (48 half-hour entries in kW)
+        detailed = attrs.get("detailedForecast")
         if detailed and isinstance(detailed, list):
             half_hourly = [0.0] * 48
             for entry in detailed:
                 try:
                     period = entry.get("period_start")
                     pv = float(entry.get("pv_estimate", 0))
-                    # Handle both datetime objects and strings
                     if hasattr(period, "hour"):
                         hour = period.hour
                         minute = period.minute
@@ -409,14 +446,28 @@ class SunriseSocCoordinator:
                         continue
                     idx = hour * 2 + (1 if minute >= 30 else 0)
                     if 0 <= idx < 48:
-                        half_hourly[idx] = pv * 0.5  # Convert kW to kWh per half-hour
+                        half_hourly[idx] = pv * 0.5  # kW → kWh per half-hour
                 except (ValueError, TypeError, IndexError, AttributeError):
                     continue
             if any(v > 0 for v in half_hourly):
                 return half_hourly
 
-        # Fallback: detailedHourly (24 entries → split into 48 half-hours)
-        detailed = state.attributes.get("detailedHourly")
+        # Open-Meteo: wh_period (24 hourly entries in Wh)
+        wh = attrs.get("wh_period")
+        if wh and isinstance(wh, dict):
+            hourly = [0.0] * 24
+            for ts_str, wh_val in wh.items():
+                try:
+                    hour, _ = self._parse_time_from_key(ts_str)
+                    if 0 <= hour < 24:
+                        hourly[hour] = float(wh_val) / 1000.0  # Wh → kWh
+                except (ValueError, TypeError, IndexError):
+                    continue
+            if any(v > 0 for v in hourly):
+                return hourly
+
+        # Solcast fallback: detailedHourly (24 entries → split into 48 half-hours)
+        detailed = attrs.get("detailedHourly")
         if detailed and isinstance(detailed, list):
             half_hourly = [0.0] * 48
             for entry in detailed:
@@ -437,6 +488,17 @@ class SunriseSocCoordinator:
                 return half_hourly
 
         return None
+
+    @staticmethod
+    def _parse_time_from_key(ts_str: str) -> tuple[int, int]:
+        """Parse hour and minute from an ISO timestamp string key."""
+        time_part = ts_str.split("T")[1][:5]
+        return int(time_part[:2]), int(time_part[3:5])
+
+    # Keep old name as alias for backward compatibility
+    def get_solcast_hourly(self, day: int) -> list[float] | None:
+        """Backward-compatible alias for get_solar_hourly."""
+        return self.get_solar_hourly(day)
 
     def update(self) -> None:
         """Recalculate all predictions."""
@@ -472,10 +534,12 @@ class SunriseSocCoordinator:
         main_kwh = main_soc_pct / 100 * self.main.capacity_kwh
 
         if not overnight:
-            remaining_solar = self.get_state_float(
-                self.config.get(CONF_SOLCAST_REMAINING, "")
+            remaining_entity = self.config.get(
+                CONF_SOLAR_ENTITY_REMAINING,
+                self.config.get(CONF_SOLCAST_REMAINING, ""),
             )
-            solar_hourly_day1 = self.get_solcast_hourly(1)
+            remaining_solar = self.get_state_float(remaining_entity)
+            solar_hourly_day1 = self.get_solar_hourly(1)
 
             # Skip update if Solcast data is unavailable (e.g., during API refresh or restart)
             if remaining_solar <= 0 and solar_hourly_day1 is None:
@@ -553,8 +617,8 @@ class SunriseSocCoordinator:
                 solar = self._frozen_solcast[day]
                 solar_hourly = self._frozen_solcast_hourly.get(day)
             else:
-                solar = self.get_solcast_kwh(day)
-                solar_hourly = self.get_solcast_hourly(day)
+                solar = self.get_solar_kwh(day)
+                solar_hourly = self.get_solar_hourly(day)
 
             self.results[day] = predict_future_day(
                 prev_kwh=prev_kwh,
@@ -588,13 +652,13 @@ class SunriseSocCoordinator:
                 _LOGGER.debug("Error in update callback", exc_info=True)
 
     def freeze(self) -> None:
-        """Freeze Solcast values at sunset to prevent midnight shift."""
+        """Freeze solar forecast values at sunset to prevent midnight shift."""
         for day in range(2, self.num_days + 1):
-            self._frozen_solcast[day] = self.get_solcast_kwh(day)
-            hourly = self.get_solcast_hourly(day)
+            self._frozen_solcast[day] = self.get_solar_kwh(day)
+            hourly = self.get_solar_hourly(day)
             if hourly:
                 self._frozen_solcast_hourly[day] = hourly
-        _LOGGER.debug("Frozen Solcast captured for days 2-%d", self.num_days)
+        _LOGGER.debug("Frozen solar forecast captured for days 2-%d", self.num_days)
 
     def register_callback(self, callback_fn) -> None:
         """Register an update callback."""
