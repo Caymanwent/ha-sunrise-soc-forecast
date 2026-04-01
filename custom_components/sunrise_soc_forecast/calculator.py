@@ -270,7 +270,10 @@ def calc_overnight_drain_hourly(
         for _ in range(25):  # Max 24 iterations + safety
             next_h = (h + 1) % 24
             # Fractional first/last hours
-            if h == ss_int:
+            if h == ss_int and next_h == sr_int:
+                # Single hour overnight (extreme edge case)
+                frac = max(0, sunrise_hour - sunset_hour) if sunrise_hour > sunset_hour else 1.0
+            elif h == ss_int:
                 frac = 1.0 - (sunset_hour - math.floor(sunset_hour))
             elif next_h == sr_int:
                 frac = sunrise_hour - math.floor(sunrise_hour)
@@ -745,7 +748,10 @@ def predict_day1_nighttime(
             for _ in range(25):
                 next_h = (h + 1) % 24
                 # Fractional first/last hours
-                if h == now_int:
+                if h == now_int and next_h == sr_int:
+                    # Single hour: use actual remaining time
+                    frac = max(0, sunrise_hour - current_hour)
+                elif h == now_int:
                     frac = 1.0 - (current_hour - math.floor(current_hour))
                 elif next_h == sr_int:
                     frac = sunrise_hour - math.floor(sunrise_hour)
