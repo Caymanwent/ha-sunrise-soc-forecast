@@ -466,12 +466,21 @@ class SunriseSocCoordinator:
 
         # Day 1
         main_soc_pct = self.get_state_float(self.config[CONF_MAIN_SOC_ENTITY])
+        if main_soc_pct <= 0:
+            # Battery sensor unavailable — keep previous results
+            return
         main_kwh = main_soc_pct / 100 * self.main.capacity_kwh
 
         if not overnight:
             remaining_solar = self.get_state_float(
                 self.config.get(CONF_SOLCAST_REMAINING, "")
             )
+            solar_hourly_day1 = self.get_solcast_hourly(1)
+
+            # Skip update if Solcast data is unavailable (e.g., during API refresh)
+            if remaining_solar <= 0 and solar_hourly_day1 is None and 1 in self.results:
+                return
+
             hours_to_sunset = max(0, (sunset - now).total_seconds() / 3600)
             total_daytime_hours = 24.0 - overnight_params.overnight_hours
 
@@ -480,7 +489,6 @@ class SunriseSocCoordinator:
                 backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
 
             current_hour_frac = now.hour + now.minute / 60
-            solar_hourly_day1 = self.get_solcast_hourly(1)
 
             self.results[1] = predict_day1_daytime(
                 current_kwh=main_kwh,
