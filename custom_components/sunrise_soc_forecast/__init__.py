@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -111,6 +111,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     unsubs.append(
         async_track_time_change(hass, _midnight_handler, hour=0, minute=0, second=5)
+    )
+
+    # Save state before HA stops (preserves mid-hour energy accumulators)
+    @callback
+    def _on_ha_stop(event) -> None:
+        hass.async_create_task(coordinator.async_save())
+
+    unsubs.append(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_ha_stop)
     )
 
     # Store unsubs on coordinator for cleanup
