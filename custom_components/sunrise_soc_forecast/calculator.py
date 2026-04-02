@@ -375,8 +375,10 @@ def get_consumption(
     daily_valid = daily_avg is not None and daily_avg > guard_threshold
     overnight_valid = overnight_avg is not None and overnight_avg > guard_threshold
     both_valid = daily_valid and overnight_valid
+    # Daily must be >= overnight — if not, data is corrupt
+    sane = both_valid and daily_avg >= overnight_avg
 
-    if both_valid:
+    if sane:
         return ConsumptionData(
             avg_daily_kwh=daily_avg,
             avg_overnight_kwh=overnight_avg,

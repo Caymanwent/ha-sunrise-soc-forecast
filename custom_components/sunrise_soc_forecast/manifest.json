@@ -8,5 +8,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Caymanwent/ha-sunrise-soc-forecast/issues",
   "requirements": [],
-  "version": "2.6.8-beta"
+  "version": "2.6.9-beta"
 }
