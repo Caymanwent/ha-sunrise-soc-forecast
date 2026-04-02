@@ -17,10 +17,10 @@ content: |
   {%- endif %}
   {%- endfor %}
 
-  {% if is_state('binary_sensor.is_overnight', 'off') -%}
-  Mode: Daytime | Remaining solar: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'remaining_solar_kwh') }} kWh | Hours to sunset: {{ ((as_datetime(state_attr('sun.sun', 'next_setting')) - now()).total_seconds() / 3600) | round(1) }}h
+  {% if state_attr('sensor.predicted_sunrise_soc_day_1', 'mode') == 'daytime' -%}
+  Mode: ☀️ Daytime | Remaining solar: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'remaining_solar_kwh') }} kWh | Hours to sunset: {{ ((as_datetime(state_attr('sun.sun', 'next_setting')) - now()).total_seconds() / 3600) | round(1) }}h
   {%- else -%}
-  Mode: Nighttime
+  Mode: 🌙 Nighttime | Backup: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'backup_charged_kwh') }} kWh
   {%- endif %}
   {% if state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_needed_kwh') | float(0) > 0 -%}
   Grid needed: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_needed_kwh') }} kWh to target ({{ state_attr('sensor.predicted_sunrise_soc_day_1', 'target_soc') }}%) | Used today: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_used_today_kwh') }} kWh
