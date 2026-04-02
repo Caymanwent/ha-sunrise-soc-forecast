@@ -612,10 +612,17 @@ class SunriseSocCoordinator:
         for day in range(2, self.num_days + 1):
             prev_kwh = self.results.get(day - 1, DayResult(0, 0)).predicted_kwh
 
-            # Use frozen Solcast during overnight to prevent midnight shift
-            if overnight and day in self._frozen_solcast:
+            # Use frozen solar during overnight to prevent midnight shift
+            if overnight and day in self._frozen_solcast and self._frozen_solcast[day] > 0:
                 solar = self._frozen_solcast[day]
                 solar_hourly = self._frozen_solcast_hourly.get(day)
+            elif overnight and now.hour < 12:
+                # Post-midnight with no valid frozen data — skip this day
+                # to avoid reading shifted entities that have wrong day's data
+                if day in self.results:
+                    continue
+                solar = 0.0
+                solar_hourly = None
             else:
                 solar = self.get_solar_kwh(day)
                 solar_hourly = self.get_solar_hourly(day)
@@ -654,7 +661,9 @@ class SunriseSocCoordinator:
     def freeze(self) -> None:
         """Freeze solar forecast values at sunset to prevent midnight shift."""
         for day in range(2, self.num_days + 1):
-            self._frozen_solcast[day] = self.get_solar_kwh(day)
+            solar = self.get_solar_kwh(day)
+            if solar > 0:
+                self._frozen_solcast[day] = solar
             hourly = self.get_solar_hourly(day)
             if hourly:
                 self._frozen_solcast_hourly[day] = hourly

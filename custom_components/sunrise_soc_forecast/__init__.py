@@ -147,8 +147,13 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Unsubscribe all event listeners (fix #2)
     coordinator = hass.data[DOMAIN].get(entry.entry_id)
+
+    # Save state before unloading (preserves frozen data and accumulators)
+    if coordinator:
+        await coordinator.async_save()
+
+    # Unsubscribe all event listeners
     if coordinator and hasattr(coordinator, "unsubs"):
         for unsub in coordinator.unsubs:
             unsub()
