@@ -107,6 +107,10 @@ class SunriseSocSensor(SensorEntity):
             attrs["solcast_kwh"] = result.solcast_kwh
             attrs["morning_low_kwh"] = result.morning_low_kwh
             attrs["morning_low_pct"] = result.morning_low_pct
+            if result.floor_hour:
+                attrs["floor_hour"] = result.floor_hour
+            if result.night_floor_hour:
+                attrs["night_floor_hour"] = result.night_floor_hour
 
         return attrs
 

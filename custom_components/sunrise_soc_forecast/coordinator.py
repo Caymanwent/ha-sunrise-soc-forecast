@@ -645,10 +645,15 @@ class SunriseSocCoordinator:
             )
 
         # Calculate grid needed for each day
+        # Uses the worst of: next day's day_low (daytime) and current predicted_kwh (overnight)
         for day in range(1, self.num_days + 1):
             if day in self.results:
                 result = self.results[day]
-                deficit = target_kwh - result.predicted_kwh
+                worst = result.predicted_kwh
+                next_day = self.results.get(day + 1)
+                if next_day and next_day.morning_low_kwh > 0:
+                    worst = min(worst, next_day.morning_low_kwh)
+                deficit = target_kwh - worst
                 result.grid_needed_kwh = round(max(0, deficit), 2)
 
         # Notify sensors
