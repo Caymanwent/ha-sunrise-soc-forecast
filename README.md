@@ -361,6 +361,12 @@ Check the `using_fallback` attribute on Day 1. If `true`, the integration is usi
 ### Grid needed shows 0 for all days
 Either your predicted SoC is above the target for all days (good!), or the target SoC is set to 0. Check the `target_soc` attribute on any day's sensor.
 
+## Community
+
+- **Questions or ideas?** Start a thread in [Discussions](https://github.com/Caymanwent/ha-sunrise-soc-forecast/discussions)
+- **Found a bug?** Open an [Issue](https://github.com/Caymanwent/ha-sunrise-soc-forecast/issues)
+- **Share your setup** — we'd love to hear how you're using the integration and what battery/solar system you have
+
 ## License
 
 MIT
