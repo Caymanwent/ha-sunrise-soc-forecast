@@ -223,9 +223,9 @@ class SunriseSocCoordinator:
         if self._was_overnight and not overnight:
             self._on_sunrise()
 
-        # Detect sunset transition
+        # Sunset transition (no longer freezes — freeze happens at 23:55)
         if not self._was_overnight and overnight:
-            self._on_sunset()
+            pass
 
         self._last_power_reading = power_kw
         self._last_power_time = now
@@ -262,10 +262,11 @@ class SunriseSocCoordinator:
         self._overnight_energy_kwh = 0.0
         self.hass.async_create_task(self.async_save())
 
-    def _on_sunset(self) -> None:
-        """Handle sunset: freeze Days 2-7."""
+    def on_pre_midnight(self) -> None:
+        """Handle pre-midnight: freeze Days 2-7 before entities shift at midnight."""
         self.freeze()
         self.hass.async_create_task(self.async_save())
+        _LOGGER.debug("Pre-midnight freeze completed")
 
     def on_midnight(self) -> None:
         """Handle midnight: record daily consumption, reset accumulators."""

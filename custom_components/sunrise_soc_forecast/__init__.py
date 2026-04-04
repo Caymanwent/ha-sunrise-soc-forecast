@@ -103,6 +103,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_track_state_change_event(hass, [grid_entity], _grid_change_listener)
         )
 
+    # Pre-midnight: freeze solar data before entities shift at midnight
+    @callback
+    def _pre_midnight_handler(now) -> None:
+        coordinator.on_pre_midnight()
+
+    unsubs.append(
+        async_track_time_change(hass, _pre_midnight_handler, hour=23, minute=55, second=0)
+    )
+
     # Midnight: record daily consumption and reset accumulator
     @callback
     def _midnight_handler(now) -> None:
