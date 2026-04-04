@@ -774,8 +774,8 @@ def predict_day1_daytime(
 
     backup_charged = min(backup.usable_kwh, backup_current + surplus * backup_charge_efficiency) if backup.enabled else 0.0
 
-    # Overnight drain — use current_hour if past sunset to avoid double-counting
-    overnight_start = max(current_hour, sunset_hour)
+    # Overnight drain — use current_hour when past sunset to avoid double-counting
+    overnight_start = current_hour if hours_to_sunset <= 0 else sunset_hour
     night_floor = None
     if hourly_consumption and len(hourly_consumption) == 24:
         sunrise_kwh, night_floor = calc_overnight_drain_hourly(
