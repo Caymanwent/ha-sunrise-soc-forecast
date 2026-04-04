@@ -758,71 +758,27 @@ def predict_future_day(
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
-    """Predict SoC for Days 2-7 using hourly solar + consumption data."""
-    daytime_kwh = max(0, consumption.avg_daily_kwh - consumption.avg_overnight_kwh)
+    """Predict SoC for Days 2-7 using the same continuous loop as Day 1."""
     daytime_hours = 24.0 - overnight_params.overnight_hours
     if daytime_hours < 1:
         daytime_hours = 12.0
 
-    # Simulate daytime with hourly consumption and solar if available
-    sim = simulate_daytime(
-        start_kwh=prev_kwh,
-        solar_total_kwh=solar_kwh,
-        daytime_consumption_kwh=daytime_kwh,
-        daytime_hours=daytime_hours,
-        battery_cap=main.capacity_kwh,
-        battery_floor=main.floor_kwh,
+    return predict_day1_daytime(
+        current_kwh=prev_kwh,
+        remaining_solar=solar_kwh,
+        hours_to_sunset=sunset_hour - sunrise_hour,
+        total_daytime_hours=daytime_hours,
+        consumption=consumption,
+        main=main,
+        backup=backup,
+        backup_soc_pct=backup.floor_percent,
+        overnight_params=overnight_params,
+        target_kwh=target_kwh,
         hourly_consumption=hourly_consumption,
-        sunrise_hour=sunrise_hour,
-        hourly_solar=hourly_solar,
+        current_hour=sunrise_hour,
         sunset_hour=sunset_hour,
+        hourly_solar=hourly_solar,
         inverter_efficiency=inverter_efficiency,
-    )
-    sunset_kwh = sim.sunset_kwh
-
-    # Backup charges from solar surplus (energy clipped when battery hit cap)
-    backup_charged = min(backup.usable_kwh, sim.surplus_kwh * backup_charge_efficiency) if backup.enabled else 0.0
-
-    # Use hourly overnight drain if hourly data available
-    night_floor = None
-    if hourly_consumption and len(hourly_consumption) == 24:
-        sunrise_kwh, night_floor = calc_overnight_drain_hourly(
-            sunset_kwh=sunset_kwh,
-            backup_charged_kwh=backup_charged,
-            backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
-            backup_activation_hour=backup.activation_hour if backup.enabled else 2,
-            hourly_consumption=hourly_consumption,
-            sunset_hour=sunset_hour,
-            sunrise_hour=sunrise_hour,
-            main_floor_kwh=main.floor_kwh,
-            main_cap=main.capacity_kwh,
-            backup_mode=backup.mode if backup.enabled else "always",
-            target_kwh=target_kwh,
-            inverter_efficiency=inverter_efficiency,
-            backup_discharge_efficiency=backup_discharge_efficiency,
-        )
-    else:
-        sunrise_kwh = calc_overnight_drain(
-            sunset_kwh=sunset_kwh,
-            backup_charged_kwh=backup_charged,
-            backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
-            params=overnight_params,
-            main_floor_kwh=main.floor_kwh,
-            main_cap=main.capacity_kwh,
-            backup_mode=backup.mode if backup.enabled else "always",
-            target_kwh=target_kwh,
-            inverter_efficiency=inverter_efficiency,
-            backup_discharge_efficiency=backup_discharge_efficiency,
-        )
-
-    return DayResult(
-        soc_percent=round(sunrise_kwh / main.capacity_kwh * 100, 1),
-        predicted_kwh=round(sunrise_kwh, 2),
-        solcast_kwh=round(solar_kwh, 2),
-        daytime_consumption_kwh=round(sim.total_consumption_kwh, 2),
-        backup_charged_kwh=round(backup_charged, 2),
-        morning_low_kwh=round(sim.morning_low_kwh, 2),
-        morning_low_pct=round(sim.morning_low_kwh / main.capacity_kwh * 100, 1),
-        floor_hour=sim.day_low_hour,
-        night_floor_hour=night_floor,
+        backup_charge_efficiency=backup_charge_efficiency,
+        backup_discharge_efficiency=backup_discharge_efficiency,
     )
