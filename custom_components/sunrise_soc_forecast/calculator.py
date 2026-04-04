@@ -300,7 +300,7 @@ def calc_overnight_drain_hourly(
     battery = sunset_kwh
     backup_remaining = backup_charged_kwh
     ss_int = int(math.floor(sunset_hour))
-    sr_int = int(math.ceil(sunrise_hour)) % 24
+    sr_int = int(math.floor(sunrise_hour)) % 24
 
     # Guard: if overnight is effectively zero, return sunset value
     if ss_int == sr_int:
@@ -595,9 +595,14 @@ def predict_day1_daytime(
     start_idx = int(math.floor(current_hour * steps_per_hour))
     end_idx = int(math.ceil(sunrise_hour * steps_per_hour))
 
-    if end_idx <= start_idx:
+    if hours_to_sunset > 0:
+        # Daytime: ~24 hour simulation, always wraps through midnight
+        total_steps = (array_len - start_idx) + end_idx
+    elif end_idx <= start_idx:
+        # Nighttime past midnight: wraps (e.g., 23:00 → 06:00)
         total_steps = (array_len - start_idx) + end_idx
     else:
+        # Nighttime before midnight: no wrap (e.g., 20:00 → 06:00 = direct)
         total_steps = end_idx - start_idx
 
     if total_steps <= 0:
@@ -691,7 +696,12 @@ def predict_day1_daytime(
 
         battery += solar_scaled - cons_dc
         if battery > main.capacity_kwh:
-            surplus += battery - main.capacity_kwh
+            clip = battery - main.capacity_kwh
+            surplus += clip
+            # Charge backup from surplus in real-time
+            if backup.enabled and br < backup.usable_kwh:
+                charge = min(clip * backup_charge_efficiency, backup.usable_kwh - br)
+                br += charge
             battery = main.capacity_kwh
         if battery < main.floor_kwh:
             battery = main.floor_kwh
