@@ -578,10 +578,10 @@ def predict_day1_daytime(
     if sunrise_hour < 0:
         sunrise_hour = 0.0
 
-    # Number of remaining steps from now to sunset
+    # Number of remaining steps from now to sunset (0 when past sunset)
     current_h = int(math.floor(current_hour))
     sunset_h = int(math.ceil(sunset_hour))
-    remaining_steps = max(1, sunset_h - current_h)
+    remaining_steps = max(0, sunset_h - current_h) if hours_to_sunset > 0 else 0
 
     # Full day steps (for sine curve positioning)
     sr_int = int(math.floor(sunrise_hour))
@@ -743,8 +743,10 @@ def predict_day1_daytime(
         factor_sum = sum(solar_factors)
         if factor_sum > 0:
             solar_per_step = [(f / factor_sum) * remaining_solar for f in solar_factors]
-        else:
+        elif remaining_steps > 0:
             solar_per_step = [remaining_solar / remaining_steps] * remaining_steps
+        else:
+            solar_per_step = []
 
     # Simulate hour by hour with clipping
     battery = current_kwh
