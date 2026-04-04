@@ -21,7 +21,6 @@ from .calculator import (
     get_consumption,
     get_overnight_params,
     predict_day1_daytime,
-    predict_day1_nighttime,
     predict_future_day,
 )
 from .const import (
@@ -533,6 +532,9 @@ class SunriseSocCoordinator:
             return
         main_kwh = main_soc_pct / 100 * self.main.capacity_kwh
 
+        # Day 1 — unified path for daytime and nighttime
+        current_hour_frac = now.hour + now.minute / 60
+
         if not overnight:
             remaining_entity = self.config.get(
                 CONF_SOLAR_ENTITY_REMAINING,
@@ -546,67 +548,36 @@ class SunriseSocCoordinator:
                 return
 
             hours_to_sunset = max(0, (sunset - now).total_seconds() / 3600)
-            total_daytime_hours = 24.0 - overnight_params.overnight_hours
-
-            backup_soc = 0.0
-            if self.backup.enabled:
-                backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
-
-            current_hour_frac = now.hour + now.minute / 60
-
-            self.results[1] = predict_day1_daytime(
-                current_kwh=main_kwh,
-                remaining_solar=remaining_solar,
-                hours_to_sunset=hours_to_sunset,
-                total_daytime_hours=total_daytime_hours,
-                consumption=consumption,
-                main=self.main,
-                backup=self.backup,
-                backup_soc_pct=backup_soc,
-                overnight_params=overnight_params,
-                target_kwh=target_kwh,
-                hourly_consumption=hourly_avg,
-                current_hour=current_hour_frac,
-                sunset_hour=sunset_hour,
-                hourly_solar=solar_hourly_day1,
-                inverter_efficiency=self.inverter_efficiency,
-                backup_charge_efficiency=self.backup_charge_efficiency,
-                backup_discharge_efficiency=self.backup_discharge_efficiency,
-            )
         else:
-            backup_available = 0.0
-            backup_kw = 0.0
-            if self.backup.enabled:
-                backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
-                backup_available = max(
-                    0,
-                    (backup_soc - self.backup.floor_percent) / 100 * self.backup.capacity_kwh,
-                )
-                backup_kw_live = self.get_state_float(self.config.get(CONF_BACKUP_DISCHARGE_ENTITY, ""))
-                # Use live rate if actively discharging, fixed rate if backup has charge but idle
-                if backup_kw_live > 0:
-                    backup_kw = backup_kw_live
-                elif backup_available > 0:
-                    backup_kw = self.backup.fixed_discharge_kw
-                else:
-                    backup_kw = 0.0
+            remaining_solar = 0.0
+            solar_hourly_day1 = None
+            hours_to_sunset = 0.0
 
-            hours_to_sunrise = max(0, (sunrise - now).total_seconds() / 3600)
+        total_daytime_hours = 24.0 - overnight_params.overnight_hours
 
-            self.results[1] = predict_day1_nighttime(
-                current_kwh=main_kwh,
-                backup_available_kwh=backup_available,
-                backup_kw=backup_kw,
-                hours_to_sunrise=hours_to_sunrise,
-                activation_hour=self.backup.activation_hour,
-                now_dt=now,
-                overnight_params=overnight_params,
-                main=self.main,
-                inverter_efficiency=self.inverter_efficiency,
-                backup_discharge_efficiency=self.backup_discharge_efficiency,
-                hourly_consumption=hourly_avg,
-                sunrise_hour=sunrise_hour,
-            )
+        backup_soc = 0.0
+        if self.backup.enabled:
+            backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
+
+        self.results[1] = predict_day1_daytime(
+            current_kwh=main_kwh,
+            remaining_solar=remaining_solar,
+            hours_to_sunset=hours_to_sunset,
+            total_daytime_hours=total_daytime_hours,
+            consumption=consumption,
+            main=self.main,
+            backup=self.backup,
+            backup_soc_pct=backup_soc,
+            overnight_params=overnight_params,
+            target_kwh=target_kwh,
+            hourly_consumption=hourly_avg,
+            current_hour=current_hour_frac,
+            sunset_hour=sunset_hour,
+            hourly_solar=solar_hourly_day1,
+            inverter_efficiency=self.inverter_efficiency,
+            backup_charge_efficiency=self.backup_charge_efficiency,
+            backup_discharge_efficiency=self.backup_discharge_efficiency,
+        )
 
         # Days 2-N — always calculate live, only Solcast freezes overnight
         for day in range(2, self.num_days + 1):

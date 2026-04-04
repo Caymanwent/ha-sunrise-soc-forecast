@@ -568,10 +568,11 @@ def predict_day1_daytime(
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
-    """Day 1 daytime prediction: current SoC + remaining solar → sunset → overnight.
+    """Day 1 prediction: current SoC + remaining solar → sunset → overnight → sunrise.
 
-    Uses partial sine curve from current hour to sunset, distributing
-    remaining_solar across the remaining daylight hours proportionally.
+    Handles both daytime and nighttime: at night, hours_to_sunset=0 and solar=0,
+    so the daytime simulation produces no change and overnight drain starts from
+    current_kwh at current_hour.
     """
     sunrise_hour = sunset_hour - total_daytime_hours
     if sunrise_hour < 0:
@@ -771,7 +772,8 @@ def predict_day1_daytime(
 
     backup_charged = min(backup.usable_kwh, backup_current + surplus * backup_charge_efficiency) if backup.enabled else 0.0
 
-    # Overnight drain
+    # Overnight drain — use current_hour if past sunset to avoid double-counting
+    overnight_start = max(current_hour, sunset_hour)
     night_floor = None
     if hourly_consumption and len(hourly_consumption) == 24:
         sunrise_kwh, night_floor = calc_overnight_drain_hourly(
@@ -780,7 +782,7 @@ def predict_day1_daytime(
             backup_kw=backup.fixed_discharge_kw if backup.enabled else 0,
             backup_activation_hour=backup.activation_hour if backup.enabled else 2,
             hourly_consumption=hourly_consumption,
-            sunset_hour=sunset_hour,
+            sunset_hour=overnight_start,
             sunrise_hour=sunrise_hour,
             main_floor_kwh=main.floor_kwh,
             main_cap=main.capacity_kwh,
@@ -809,121 +811,6 @@ def predict_day1_daytime(
         solcast_kwh=round(total_solar, 2),
         daytime_consumption_kwh=round(total_consumption, 2),
         backup_charged_kwh=round(backup_charged, 2),
-    )
-
-
-def predict_day1_nighttime(
-    # Note: backup_mode is intentionally not applied here.
-    # At night, we use live sensor readings (actual SoC + actual backup state)
-    # rather than the target-based logic which is for future day planning.
-    current_kwh: float,
-    backup_available_kwh: float,
-    backup_kw: float,
-    hours_to_sunrise: float,
-    activation_hour: int,
-    now_dt: datetime,
-    overnight_params: OvernightParams,
-    main: BatteryConfig,
-    inverter_efficiency: float = 1.0,
-    backup_discharge_efficiency: float = 1.0,
-    hourly_consumption: list[float] | None = None,
-    sunrise_hour: float = 6.0,
-) -> DayResult:
-    """Day 1 nighttime prediction: current SoC - hourly drain + live backup."""
-    eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
-    current_hour = now_dt.hour + now_dt.minute / 60
-
-    # Use hourly consumption if available, otherwise fall back to flat rate
-    if hourly_consumption and len(hourly_consumption) == 24:
-        now_int = int(math.floor(current_hour))
-        sr_int = int(math.floor(sunrise_hour))
-
-        def _is_backup_active(h: int) -> bool:
-            h24 = h % 24
-            if activation_hour <= sr_int:
-                return activation_hour <= h24 < sr_int
-            else:
-                return h24 >= activation_hour or h24 < sr_int
-
-        def _drain_hour_d1(bat: float, br: float, h: int, frac: float) -> tuple[float, float]:
-            """Drain one hour of consumption from battery."""
-            consumption_dc = hourly_consumption[h % 24] * frac / eff
-            if br > 0 and backup_kw > 0 and _is_backup_active(h):
-                backup_energy = min(br, backup_kw * frac)
-                consumption_dc -= backup_energy * backup_discharge_efficiency / eff
-                br -= backup_energy
-            bat -= consumption_dc
-            bat = max(main.floor_kwh, min(main.capacity_kwh, bat))
-            return bat, br
-
-        bat = current_kwh
-        br = backup_available_kwh
-
-        if now_int == sr_int:
-            # Same hour as sunrise — drain only the remaining fraction
-            frac = max(0, sunrise_hour - current_hour)
-            if frac > 0:
-                bat, br = _drain_hour_d1(bat, br, now_int, frac)
-        else:
-            # First hour: fractional entry
-            entry_frac = 1.0 - (current_hour - math.floor(current_hour))
-            bat, br = _drain_hour_d1(bat, br, now_int, entry_frac)
-            h = (now_int + 1) % 24
-
-            # Middle hours: full consumption
-            for _ in range(24):
-                if h == sr_int:
-                    break
-                bat, br = _drain_hour_d1(bat, br, h, 1.0)
-                h = (h + 1) % 24
-
-            # Sunrise hour: fractional exit
-            if h == sr_int:
-                exit_frac = sunrise_hour - math.floor(sunrise_hour)
-                if exit_frac > 0:
-                    bat, br = _drain_hour_d1(bat, br, h, exit_frac)
-
-        main_kwh = bat
-    else:
-        # Flat rate fallback
-        avg_kw = overnight_params.avg_overnight_kw
-
-        two_am = now_dt.replace(hour=activation_hour, minute=0, second=0, microsecond=0)
-        if now_dt >= two_am:
-            two_am += timedelta(days=1)
-
-        if now_dt.hour >= activation_hour and now_dt.hour < 12:
-            hours_phase1 = 0.0
-            hours_phase2 = hours_to_sunrise
-        else:
-            hours_phase1 = max(0, (two_am - now_dt).total_seconds() / 3600)
-            hours_phase1 = min(hours_phase1, hours_to_sunrise)
-            hours_phase2 = hours_to_sunrise - hours_phase1
-
-        main_kwh = current_kwh
-
-        if hours_phase1 > 0:
-            main_kwh -= avg_kw / eff * hours_phase1
-
-        if hours_phase2 > 0:
-            if backup_available_kwh <= 0 or backup_kw <= 0:
-                main_kwh -= avg_kw / eff * hours_phase2
-            else:
-                backup_hours = backup_available_kwh / backup_kw
-                net_kw = backup_kw * backup_discharge_efficiency / eff - avg_kw / eff
-                if backup_hours >= hours_phase2:
-                    main_kwh += net_kw * hours_phase2
-                else:
-                    main_kwh += net_kw * backup_hours
-                    remaining = hours_phase2 - backup_hours
-                    main_kwh -= avg_kw / eff * remaining
-
-    main_kwh = max(main.floor_kwh, min(main.capacity_kwh, main_kwh))
-
-    return DayResult(
-        soc_percent=round(main_kwh / main.capacity_kwh * 100, 1),
-        predicted_kwh=round(main_kwh, 2),
-        backup_charged_kwh=round(backup_available_kwh, 2),
     )
 
 
