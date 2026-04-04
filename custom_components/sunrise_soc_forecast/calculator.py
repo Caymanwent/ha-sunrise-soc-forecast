@@ -685,7 +685,9 @@ def predict_day1_daytime(
             br -= backup_energy
 
         total_solar += solar_scaled
-        total_consumption += hourly_consumption[hour] * frac if hourly_consumption else 0.0
+        # Only count consumption during solar hours for the daytime attribute
+        if solar_val > 0 and hourly_consumption:
+            total_consumption += hourly_consumption[hour] * frac
 
         battery += solar_scaled - cons_dc
         if battery > main.capacity_kwh:
