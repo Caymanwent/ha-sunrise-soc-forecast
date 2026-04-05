@@ -660,7 +660,7 @@ def predict_day1_daytime(
 
         # Fractional first/last steps
         if total_steps == 1:
-            frac = step_hours  # single step
+            frac = max(0.001, sunrise_hour - current_hour)  # actual remaining time
         elif i == 0:
             elapsed = current_hour * steps_per_hour - math.floor(current_hour * steps_per_hour)
             frac = step_hours * (1.0 - elapsed)
