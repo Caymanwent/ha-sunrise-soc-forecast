@@ -553,7 +553,7 @@ def predict_day1_daytime(
     current_kwh: float,
     remaining_solar: float,
     hours_to_sunset: float,
-    total_daytime_hours: float,
+    sunrise_hour: float,
     consumption: ConsumptionData,
     main: BatteryConfig,
     backup: BackupConfig,
@@ -574,9 +574,6 @@ def predict_day1_daytime(
     sunset, consumption and backup assist continue through the night. No separate
     daytime/nighttime phases or handoff.
     """
-    sunrise_hour = sunset_hour - total_daytime_hours
-    if sunrise_hour < 0:
-        sunrise_hour += 24.0
 
     eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
 
@@ -759,15 +756,11 @@ def predict_future_day(
     backup_discharge_efficiency: float = 1.0,
 ) -> DayResult:
     """Predict SoC for Days 2-7 using the same continuous loop as Day 1."""
-    daytime_hours = 24.0 - overnight_params.overnight_hours
-    if daytime_hours < 1:
-        daytime_hours = 12.0
-
     return predict_day1_daytime(
         current_kwh=prev_kwh,
         remaining_solar=solar_kwh,
         hours_to_sunset=sunset_hour - sunrise_hour,
-        total_daytime_hours=daytime_hours,
+        sunrise_hour=sunrise_hour,
         consumption=consumption,
         main=main,
         backup=backup,

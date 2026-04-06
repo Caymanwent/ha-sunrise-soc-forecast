@@ -554,8 +554,6 @@ class SunriseSocCoordinator:
             solar_hourly_day1 = None
             hours_to_sunset = 0.0
 
-        total_daytime_hours = 24.0 - overnight_params.overnight_hours
-
         backup_soc = 0.0
         if self.backup.enabled:
             backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
@@ -564,7 +562,7 @@ class SunriseSocCoordinator:
             current_kwh=main_kwh,
             remaining_solar=remaining_solar,
             hours_to_sunset=hours_to_sunset,
-            total_daytime_hours=total_daytime_hours,
+            sunrise_hour=sunrise_hour,
             consumption=consumption,
             main=self.main,
             backup=self.backup,

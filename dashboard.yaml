@@ -28,4 +28,20 @@ content: |
   Grid needed: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_needed_kwh') }} kWh to target ({{ state_attr('sensor.predicted_sunrise_soc_day_1', 'target_soc') }}%) | Used today: {{ state_attr('sensor.predicted_sunrise_soc_day_1', 'grid_used_today_kwh') }} kWh
   {%- endif %}
   {% set hourly = state_attr('sensor.7_day_average_daily_consumption', 'hourly_averages') -%}
-  *{% if state_attr('sensor.predicted_sunrise_soc_day_1', 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {% if hourly %}{{ hourly | sum | round(1) }}{% else %}{{ states('sensor.7_day_average_daily_consumption') | round(1) }}{% endif %} kWh / overnight: {{ states('sensor.7_day_average_overnight_consumption') | round(1) }} kWh){% endif %}*
+  {% if hourly -%}
+  {% set ss = state_attr('sun.sun', 'next_setting') | as_datetime | as_local -%}
+  {% set sr = state_attr('sun.sun', 'next_rising') | as_datetime | as_local -%}
+  {% set ss_h = ss.hour + ss.minute / 60 -%}
+  {% set sr_h = sr.hour + sr.minute / 60 -%}
+  {% set ss_int = ss_h | int -%}
+  {% set sr_int = sr_h | int -%}
+  {% set ns = namespace(overnight=0) -%}
+  {% set ns.overnight = ns.overnight + hourly[ss_int] * (1 - (ss_h - ss_int)) -%}
+  {% for h in range(ss_int + 1, ss_int + 13) -%}
+  {% if h % 24 != sr_int -%}
+  {% set ns.overnight = ns.overnight + hourly[h % 24] -%}
+  {% endif -%}
+  {% endfor -%}
+  {% set ns.overnight = ns.overnight + hourly[sr_int] * (sr_h - sr_int) -%}
+  {% endif -%}
+  *{% if state_attr('sensor.predicted_sunrise_soc_day_1', 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {% if hourly %}{{ hourly | sum | round(1) }}{% else %}{{ states('sensor.7_day_average_daily_consumption') | round(1) }}{% endif %} kWh / overnight: {% if hourly %}{{ ns.overnight | round(1) }}{% else %}{{ states('sensor.7_day_average_overnight_consumption') | round(1) }}{% endif %} kWh){% endif %}*
