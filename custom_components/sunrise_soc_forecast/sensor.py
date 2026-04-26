@@ -171,7 +171,7 @@ class ConsumptionAverageSensor(SensorEntity):
             f"{h:02d}:00": round(hourly[h], 2) for h in range(24)
         }
         attrs["hourly_history"] = {
-            f"{h:02d}:00": ", ".join(f"{v:.2f}" for v in self._coordinator._hourly_history[h])
+            f"{h:02d}:00": ", ".join(f"{v:05.2f}" for v in self._coordinator._hourly_history[h])
             for h in range(24)
             if self._coordinator._hourly_history[h]
         }

@@ -90,6 +90,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_track_state_change_event(hass, forecast_entities, _forecast_change_listener)
     )
 
+    # Track each sensor-mode dump load for energy integration + forecast updates
+    def _make_dump_load_listener(load_idx: int):
+        @callback
+        def _dump_load_change(event) -> None:
+            coordinator.accumulate_dump_load(load_idx)
+            coordinator.update()
+        return _dump_load_change
+
+    for idx, tracker in enumerate(coordinator.dump_loads):
+        if tracker.get("type") != "sensor":
+            continue
+        entity = tracker.get("power_entity")
+        if not entity:
+            continue
+        unsubs.append(
+            async_track_state_change_event(
+                hass, [entity], _make_dump_load_listener(idx)
+            )
+        )
+
     # Track grid power sensor for import accumulation
     grid_entity = config.get(CONF_GRID_POWER_ENTITY, "")
     if grid_entity:

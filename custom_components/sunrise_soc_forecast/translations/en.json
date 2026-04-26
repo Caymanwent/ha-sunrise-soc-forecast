@@ -35,6 +35,51 @@
           "backup_discharge_efficiency": "Discharge efficiency (%)"
         }
       },
+      "dump_loads": {
+        "title": "Dump Loads",
+        "description": "Loads that run only when there is excess solar (e.g., water heater, pool pump). Currently configured: {count}. Choose an action to add, edit, or remove a load, or Continue to proceed.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "dump_load_type": {
+        "title": "Dump Load — Entry Type",
+        "description": "How should this dump load's energy be tracked?",
+        "data": {
+          "type": "Entry type"
+        }
+      },
+      "dump_load_manual": {
+        "title": "Dump Load — Manual",
+        "description": "Estimate the load's average power and the daytime window during which it runs when there is excess solar.",
+        "data": {
+          "name": "Load name",
+          "avg_kw": "Average power while running (kW)",
+          "start_hour": "Earliest run hour (0-23)",
+          "end_hour": "Latest run hour (1-24, exclusive)",
+          "advanced": "Configure 24-hour profile (advanced)"
+        }
+      },
+      "dump_load_manual_advanced": {
+        "title": "Dump Load — Hourly Profile (kW)",
+        "description": "Set the expected kW for each hour. Hours not running can be left at 0.",
+        "data": {
+          "hour_0": "00:00", "hour_1": "01:00", "hour_2": "02:00", "hour_3": "03:00",
+          "hour_4": "04:00", "hour_5": "05:00", "hour_6": "06:00", "hour_7": "07:00",
+          "hour_8": "08:00", "hour_9": "09:00", "hour_10": "10:00", "hour_11": "11:00",
+          "hour_12": "12:00", "hour_13": "13:00", "hour_14": "14:00", "hour_15": "15:00",
+          "hour_16": "16:00", "hour_17": "17:00", "hour_18": "18:00", "hour_19": "19:00",
+          "hour_20": "20:00", "hour_21": "21:00", "hour_22": "22:00", "hour_23": "23:00"
+        }
+      },
+      "dump_load_sensor": {
+        "title": "Dump Load — Power Sensor",
+        "description": "Select a power sensor (W) for this load. The integration will track its energy automatically and build a 7-day rolling hourly profile.",
+        "data": {
+          "name": "Load name",
+          "power_entity": "Power sensor (W)"
+        }
+      },
       "solar_source": {
         "title": "Solar Forecast",
         "description": "Select your solar forecast integration. Entities will be discovered automatically. Choose 'Manual' to select entities individually.",
@@ -103,6 +148,51 @@
           "backup_mode": "Deployment mode",
           "backup_charge_efficiency": "Charge efficiency (%)",
           "backup_discharge_efficiency": "Discharge efficiency (%)"
+        }
+      },
+      "dump_loads": {
+        "title": "Dump Loads",
+        "description": "Loads that run only when there is excess solar. Currently configured: {count}. Choose an action to add, edit, or remove a load, or Continue to proceed.",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "dump_load_type": {
+        "title": "Dump Load — Entry Type",
+        "description": "How should this dump load's energy be tracked?",
+        "data": {
+          "type": "Entry type"
+        }
+      },
+      "dump_load_manual": {
+        "title": "Dump Load — Manual",
+        "description": "Estimate the load's average power and the daytime window during which it runs when there is excess solar.",
+        "data": {
+          "name": "Load name",
+          "avg_kw": "Average power while running (kW)",
+          "start_hour": "Earliest run hour (0-23)",
+          "end_hour": "Latest run hour (1-24, exclusive)",
+          "advanced": "Configure 24-hour profile (advanced)"
+        }
+      },
+      "dump_load_manual_advanced": {
+        "title": "Dump Load — Hourly Profile (kW)",
+        "description": "Set the expected kW for each hour. Hours not running can be left at 0.",
+        "data": {
+          "hour_0": "00:00", "hour_1": "01:00", "hour_2": "02:00", "hour_3": "03:00",
+          "hour_4": "04:00", "hour_5": "05:00", "hour_6": "06:00", "hour_7": "07:00",
+          "hour_8": "08:00", "hour_9": "09:00", "hour_10": "10:00", "hour_11": "11:00",
+          "hour_12": "12:00", "hour_13": "13:00", "hour_14": "14:00", "hour_15": "15:00",
+          "hour_16": "16:00", "hour_17": "17:00", "hour_18": "18:00", "hour_19": "19:00",
+          "hour_20": "20:00", "hour_21": "21:00", "hour_22": "22:00", "hour_23": "23:00"
+        }
+      },
+      "dump_load_sensor": {
+        "title": "Dump Load — Power Sensor",
+        "description": "Select a power sensor (W) for this load. The integration will track its energy automatically and build a 7-day rolling hourly profile.",
+        "data": {
+          "name": "Load name",
+          "power_entity": "Power sensor (W)"
         }
       },
       "solar_source": {

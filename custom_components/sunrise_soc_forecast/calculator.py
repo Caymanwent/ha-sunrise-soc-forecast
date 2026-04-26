@@ -567,6 +567,7 @@ def predict_day1_daytime(
     inverter_efficiency: float = 1.0,
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
+    dump_load_profile: list[float] | None = None,
 ) -> DayResult:
     """Day 1 prediction: continuous simulation from current time to next sunrise.
 
@@ -624,6 +625,15 @@ def predict_day1_daytime(
     else:
         solar_array = hourly_solar
 
+    # Pre-compute total solar per hour for dump-load excess-solar gating.
+    # Dump loads run only if solar covers the base (non-dump) consumption that hour.
+    have_dump = bool(dump_load_profile) and len(dump_load_profile or []) == 24
+    solar_per_hour: list[float] = [0.0] * 24
+    if have_dump:
+        for j, v in enumerate(solar_array):
+            h = (j // steps_per_hour) % 24
+            solar_per_hour[h] += v
+
     # Backup setup
     backup_current = 0.0
     if backup.enabled:
@@ -674,9 +684,19 @@ def predict_day1_daytime(
         solar_val = solar_array[idx] if idx < len(solar_array) else 0.0
         solar_scaled = solar_val * (frac / step_hours) if step_hours > 0 else 0.0
 
-        # Consumption
+        # Consumption — gate dump loads against solar availability per hour.
+        # Recorded consumption already includes the dump load when it ran;
+        # if solar can't cover the base (consumption - dump_load), assume the
+        # dump load is shut off this hour and use base only.
         if hourly_consumption and len(hourly_consumption) == 24:
-            cons_dc = hourly_consumption[hour] * frac / eff
+            cons_kwh = hourly_consumption[hour]
+            if have_dump:
+                dump = dump_load_profile[hour]
+                if dump > 0:
+                    base = max(0.0, cons_kwh - dump)
+                    if solar_per_hour[hour] < base:
+                        cons_kwh = base
+            cons_dc = cons_kwh * frac / eff
         else:
             cons_dc = 0.0
 
@@ -754,6 +774,7 @@ def predict_future_day(
     inverter_efficiency: float = 1.0,
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
+    dump_load_profile: list[float] | None = None,
 ) -> DayResult:
     """Predict SoC for Days 2-7 using the same continuous loop as Day 1."""
     return predict_day1_daytime(
@@ -774,4 +795,5 @@ def predict_future_day(
         inverter_efficiency=inverter_efficiency,
         backup_charge_efficiency=backup_charge_efficiency,
         backup_discharge_efficiency=backup_discharge_efficiency,
+        dump_load_profile=dump_load_profile,
     )

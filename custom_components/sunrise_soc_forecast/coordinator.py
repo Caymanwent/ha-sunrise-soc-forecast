@@ -67,6 +67,19 @@ from .const import (
     DEFAULT_MAIN_INVERTER_EFFICIENCY,
     DEFAULT_BACKUP_CHARGE_EFFICIENCY,
     DEFAULT_BACKUP_DISCHARGE_EFFICIENCY,
+    CONF_DUMP_LOADS,
+    CONF_DUMP_LOAD_NAME,
+    CONF_DUMP_LOAD_TYPE,
+    CONF_DUMP_LOAD_AVG_KW,
+    CONF_DUMP_LOAD_START_HOUR,
+    CONF_DUMP_LOAD_END_HOUR,
+    CONF_DUMP_LOAD_HOURLY_PROFILE,
+    CONF_DUMP_LOAD_POWER_ENTITY,
+    DUMP_LOAD_TYPE_MANUAL,
+    DUMP_LOAD_TYPE_SENSOR,
+    DEFAULT_DUMP_LOAD_AVG_KW,
+    DEFAULT_DUMP_LOAD_START_HOUR,
+    DEFAULT_DUMP_LOAD_END_HOUR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,6 +143,13 @@ class SunriseSocCoordinator:
         self._last_grid_reading: float | None = None
         self._last_grid_time: datetime | None = None
         self._was_overnight: bool = False
+
+        # Dump load configuration + per-sensor tracking state.
+        # Each item: {name, type, profile (manual), power_entity (sensor),
+        # hourly_history, hourly_energy_kwh, last_power, last_time, current_hour}.
+        self.dump_loads: list[dict[str, Any]] = self._build_dump_loads(
+            config.get(CONF_DUMP_LOADS, [])
+        )
 
         # Frozen Solcast — captured at sunset to prevent midnight shift
         # Stores both total and hourly arrays per day
@@ -249,6 +269,105 @@ class SunriseSocCoordinator:
 
         self._last_grid_reading = power_kw
         self._last_grid_time = now
+
+    @staticmethod
+    def _build_dump_loads(raw: list[dict]) -> list[dict[str, Any]]:
+        """Normalize raw dump-load config into runtime trackers.
+
+        Manual loads carry a 24-element kW profile (built from window or explicit).
+        Sensor loads carry per-hour history + accumulator state for time-weighted
+        integration of the power sensor.
+        """
+        loads: list[dict[str, Any]] = []
+        for item in raw or []:
+            t = item.get(CONF_DUMP_LOAD_TYPE)
+            tracker: dict[str, Any] = {
+                "name": item.get(CONF_DUMP_LOAD_NAME) or f"Dump load {len(loads) + 1}",
+                "type": t,
+            }
+            if t == DUMP_LOAD_TYPE_MANUAL:
+                explicit = item.get(CONF_DUMP_LOAD_HOURLY_PROFILE)
+                if isinstance(explicit, list) and len(explicit) == 24:
+                    profile = [max(0.0, float(v)) for v in explicit]
+                else:
+                    avg = float(item.get(CONF_DUMP_LOAD_AVG_KW, DEFAULT_DUMP_LOAD_AVG_KW))
+                    sh = int(item.get(CONF_DUMP_LOAD_START_HOUR, DEFAULT_DUMP_LOAD_START_HOUR))
+                    eh = int(item.get(CONF_DUMP_LOAD_END_HOUR, DEFAULT_DUMP_LOAD_END_HOUR))
+                    profile = [avg if (sh <= h < eh) else 0.0 for h in range(24)]
+                tracker["profile"] = profile
+            elif t == DUMP_LOAD_TYPE_SENSOR:
+                tracker["power_entity"] = item.get(CONF_DUMP_LOAD_POWER_ENTITY, "")
+                tracker["hourly_history"] = [deque(maxlen=7) for _ in range(24)]
+                tracker["hourly_energy_kwh"] = [0.0] * 24
+                tracker["last_power"] = None
+                tracker["last_time"] = None
+                tracker["current_hour"] = None
+            else:
+                continue
+            loads.append(tracker)
+        return loads
+
+    def accumulate_dump_load(self, index: int) -> None:
+        """Integrate a sensor-type dump load's power into per-hour kWh."""
+        if not (0 <= index < len(self.dump_loads)):
+            return
+        tracker = self.dump_loads[index]
+        if tracker.get("type") != DUMP_LOAD_TYPE_SENSOR:
+            return
+        entity_id = tracker.get("power_entity")
+        if not entity_id:
+            return
+
+        now = dt_util.now()
+        current_hour = now.hour
+        power_kw = self.get_state_float(entity_id) / 1000.0
+
+        if tracker["current_hour"] is None:
+            tracker["current_hour"] = current_hour
+
+        if current_hour != tracker["current_hour"]:
+            prev_hour = tracker["current_hour"]
+            if tracker["hourly_energy_kwh"][prev_hour] > 0:
+                tracker["hourly_history"][prev_hour].append(
+                    round(tracker["hourly_energy_kwh"][prev_hour], 3)
+                )
+            tracker["hourly_energy_kwh"][prev_hour] = 0.0
+            tracker["current_hour"] = current_hour
+            self.hass.async_create_task(self.async_save())
+
+        last_power = tracker["last_power"]
+        last_time = tracker["last_time"]
+        if last_power is not None and last_time is not None:
+            elapsed_hours = (now - last_time).total_seconds() / 3600
+            if 0 < elapsed_hours < 1:
+                avg_kw = (last_power + power_kw) / 2
+                tracker["hourly_energy_kwh"][current_hour] += avg_kw * elapsed_hours
+
+        tracker["last_power"] = power_kw
+        tracker["last_time"] = now
+
+    def get_dump_load_profile(self) -> list[float]:
+        """Return per-hour expected dump-load kW (sum across all loads).
+
+        Manual loads contribute their fixed 24-element profile. Sensor loads
+        contribute the average of their 7-day hourly history (kWh per hour =
+        average kW for that hour). Returns 24 zeros if no loads configured.
+        """
+        profile = [0.0] * 24
+        if not self.dump_loads:
+            return profile
+        for tracker in self.dump_loads:
+            t = tracker.get("type")
+            if t == DUMP_LOAD_TYPE_MANUAL:
+                load_profile = tracker.get("profile") or [0.0] * 24
+                for h in range(24):
+                    profile[h] += float(load_profile[h])
+            elif t == DUMP_LOAD_TYPE_SENSOR:
+                history = tracker.get("hourly_history") or []
+                for h in range(24):
+                    if h < len(history) and history[h]:
+                        profile[h] += sum(history[h]) / len(history[h])
+        return profile
 
     def _on_sunrise(self) -> None:
         """Handle sunrise: record overnight consumption, reset accumulator."""
@@ -512,6 +631,7 @@ class SunriseSocCoordinator:
         target_kwh = self.target_soc / 100 * self.main.capacity_kwh
         consumption = self.get_consumption()
         hourly_avg = self.get_hourly_averages()
+        dump_load_profile = self.get_dump_load_profile()
 
         # Get sunrise/sunset hours for hourly model
         sunrise_local = sunrise.astimezone()
@@ -576,6 +696,7 @@ class SunriseSocCoordinator:
             inverter_efficiency=self.inverter_efficiency,
             backup_charge_efficiency=self.backup_charge_efficiency,
             backup_discharge_efficiency=self.backup_discharge_efficiency,
+            dump_load_profile=dump_load_profile,
         )
 
         # Days 2-N — always calculate live, only Solcast freezes overnight
@@ -612,6 +733,7 @@ class SunriseSocCoordinator:
                 inverter_efficiency=self.inverter_efficiency,
                 backup_charge_efficiency=self.backup_charge_efficiency,
                 backup_discharge_efficiency=self.backup_discharge_efficiency,
+                dump_load_profile=dump_load_profile,
             )
 
         # Calculate grid needed for each day
@@ -705,6 +827,15 @@ class SunriseSocCoordinator:
                 "grid_energy_today_kwh": self._grid_energy_today_kwh,
                 "frozen_solcast": {str(k): v for k, v in self._frozen_solcast.items()},
                 "frozen_solcast_hourly": {str(k): v for k, v in self._frozen_solcast_hourly.items()},
+                "dump_loads_sensor_state": {
+                    t["power_entity"]: {
+                        "hourly_history": [list(h) for h in t["hourly_history"]],
+                        "hourly_energy_kwh": list(t["hourly_energy_kwh"]),
+                        "current_hour": t.get("current_hour"),
+                    }
+                    for t in self.dump_loads
+                    if t.get("type") == DUMP_LOAD_TYPE_SENSOR and t.get("power_entity")
+                },
             }
             await self._store.async_save(data)
         except Exception:
@@ -752,6 +883,27 @@ class SunriseSocCoordinator:
                     self._frozen_solcast_hourly[int(k)] = [float(x) for x in v]
             except (TypeError, ValueError):
                 pass
+
+        # Restore per-sensor dump load history (matched by power entity id)
+        sensor_state = data.get("dump_loads_sensor_state", {})
+        if isinstance(sensor_state, dict):
+            for tracker in self.dump_loads:
+                if tracker.get("type") != DUMP_LOAD_TYPE_SENSOR:
+                    continue
+                saved = sensor_state.get(tracker.get("power_entity"))
+                if not isinstance(saved, dict):
+                    continue
+                hist = saved.get("hourly_history")
+                if isinstance(hist, list) and len(hist) == 24:
+                    tracker["hourly_history"] = [
+                        deque(h, maxlen=7) for h in hist
+                    ]
+                acc = saved.get("hourly_energy_kwh")
+                if isinstance(acc, list) and len(acc) == 24:
+                    tracker["hourly_energy_kwh"] = [float(x) for x in acc]
+                ch = saved.get("current_hour")
+                if isinstance(ch, int):
+                    tracker["current_hour"] = ch
 
         _LOGGER.info(
             "State restored: %d daily, %d overnight history entries, "

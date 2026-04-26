@@ -68,6 +68,20 @@ from .const import (
     DEFAULT_MAIN_INVERTER_EFFICIENCY,
     DEFAULT_BACKUP_CHARGE_EFFICIENCY,
     DEFAULT_BACKUP_DISCHARGE_EFFICIENCY,
+    CONF_DUMP_LOADS,
+    CONF_DUMP_LOAD_NAME,
+    CONF_DUMP_LOAD_TYPE,
+    CONF_DUMP_LOAD_AVG_KW,
+    CONF_DUMP_LOAD_START_HOUR,
+    CONF_DUMP_LOAD_END_HOUR,
+    CONF_DUMP_LOAD_HOURLY_PROFILE,
+    CONF_DUMP_LOAD_ADVANCED,
+    CONF_DUMP_LOAD_POWER_ENTITY,
+    DUMP_LOAD_TYPE_MANUAL,
+    DUMP_LOAD_TYPE_SENSOR,
+    DEFAULT_DUMP_LOAD_AVG_KW,
+    DEFAULT_DUMP_LOAD_START_HOUR,
+    DEFAULT_DUMP_LOAD_END_HOUR,
 )
 from .solar_discovery import discover_solar_entities
 
@@ -78,8 +92,269 @@ ENTITY_SELECTOR = selector.EntitySelector(
 )
 
 
+class DumpLoadFlowMixin:
+    """Shared dump-load steps for ConfigFlow and OptionsFlow.
+
+    The host class must provide:
+      - ``self._data`` accumulating dict
+      - ``async_step_solar_source`` (the next step after dump loads)
+      - optionally ``_get_existing_dump_loads`` (for OptionsFlow seeding)
+    """
+
+    _data: dict
+    _editing_dump_load_index: int | None = None
+    _pending_dump_load: dict | None = None
+
+    def _get_existing_dump_loads(self) -> list[dict]:
+        """Return dump loads from existing entry — overridden by OptionsFlow."""
+        return []
+
+    def _ensure_dump_loads_seeded(self) -> None:
+        if CONF_DUMP_LOADS not in self._data:
+            self._data[CONF_DUMP_LOADS] = [dict(d) for d in self._get_existing_dump_loads()]
+
+    def _get_editing_load(self) -> dict:
+        if self._editing_dump_load_index is None:
+            return {}
+        loads = self._data.get(CONF_DUMP_LOADS, [])
+        if 0 <= self._editing_dump_load_index < len(loads):
+            return loads[self._editing_dump_load_index]
+        return {}
+
+    def _commit_dump_load(self, load: dict) -> None:
+        loads = self._data[CONF_DUMP_LOADS]
+        if (
+            self._editing_dump_load_index is not None
+            and 0 <= self._editing_dump_load_index < len(loads)
+        ):
+            loads[self._editing_dump_load_index] = load
+        else:
+            loads.append(load)
+        self._editing_dump_load_index = None
+        self._pending_dump_load = None
+
+    async def async_step_dump_loads(self, user_input=None):
+        """List/add/edit/remove dump loads. Continue → solar_source."""
+        self._ensure_dump_loads_seeded()
+        loads: list[dict] = self._data[CONF_DUMP_LOADS]
+
+        if user_input is not None:
+            action = user_input["action"]
+            if action == "continue":
+                return await self.async_step_solar_source()
+            if action == "add":
+                self._editing_dump_load_index = None
+                self._pending_dump_load = None
+                return await self.async_step_dump_load_type()
+            if action.startswith("edit_"):
+                idx = int(action[len("edit_"):])
+                if 0 <= idx < len(loads):
+                    self._editing_dump_load_index = idx
+                    if loads[idx].get(CONF_DUMP_LOAD_TYPE) == DUMP_LOAD_TYPE_SENSOR:
+                        return await self.async_step_dump_load_sensor()
+                    return await self.async_step_dump_load_manual()
+            elif action.startswith("remove_"):
+                idx = int(action[len("remove_"):])
+                if 0 <= idx < len(loads):
+                    loads.pop(idx)
+            # fall through: re-render menu
+
+        options_list: list[selector.SelectOptionDict] = [
+            selector.SelectOptionDict(value="add", label="Add new dump load"),
+        ]
+        for i, load in enumerate(loads):
+            name = load.get(CONF_DUMP_LOAD_NAME) or f"Load {i + 1}"
+            type_label = (
+                "manual"
+                if load.get(CONF_DUMP_LOAD_TYPE) == DUMP_LOAD_TYPE_MANUAL
+                else "sensor"
+            )
+            options_list.append(
+                selector.SelectOptionDict(
+                    value=f"edit_{i}", label=f"Edit: {name} ({type_label})"
+                )
+            )
+            options_list.append(
+                selector.SelectOptionDict(
+                    value=f"remove_{i}", label=f"Remove: {name}"
+                )
+            )
+        options_list.append(
+            selector.SelectOptionDict(value="continue", label="Continue")
+        )
+
+        return self.async_show_form(
+            step_id="dump_loads",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("action", default="continue"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options_list,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            description_placeholders={"count": str(len(loads))},
+        )
+
+    async def async_step_dump_load_type(self, user_input=None):
+        """Pick manual vs. sensor for a new dump load."""
+        if user_input is not None:
+            if user_input[CONF_DUMP_LOAD_TYPE] == DUMP_LOAD_TYPE_SENSOR:
+                return await self.async_step_dump_load_sensor()
+            return await self.async_step_dump_load_manual()
+
+        return self.async_show_form(
+            step_id="dump_load_type",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_DUMP_LOAD_TYPE, default=DUMP_LOAD_TYPE_MANUAL
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(
+                                    value=DUMP_LOAD_TYPE_MANUAL,
+                                    label="Manual entry (avg kW + window)",
+                                ),
+                                selector.SelectOptionDict(
+                                    value=DUMP_LOAD_TYPE_SENSOR,
+                                    label="Power sensor (auto-track)",
+                                ),
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_dump_load_manual(self, user_input=None):
+        """Simple manual: name, avg_kw, start/end hour, optional advanced toggle."""
+        existing = self._get_editing_load()
+
+        if user_input is not None:
+            advanced = user_input.pop(CONF_DUMP_LOAD_ADVANCED, False)
+            self._pending_dump_load = {
+                CONF_DUMP_LOAD_NAME: user_input[CONF_DUMP_LOAD_NAME],
+                CONF_DUMP_LOAD_TYPE: DUMP_LOAD_TYPE_MANUAL,
+                CONF_DUMP_LOAD_AVG_KW: user_input[CONF_DUMP_LOAD_AVG_KW],
+                CONF_DUMP_LOAD_START_HOUR: user_input[CONF_DUMP_LOAD_START_HOUR],
+                CONF_DUMP_LOAD_END_HOUR: user_input[CONF_DUMP_LOAD_END_HOUR],
+            }
+            if advanced:
+                if existing.get(CONF_DUMP_LOAD_HOURLY_PROFILE):
+                    self._pending_dump_load[CONF_DUMP_LOAD_HOURLY_PROFILE] = list(
+                        existing[CONF_DUMP_LOAD_HOURLY_PROFILE]
+                    )
+                return await self.async_step_dump_load_manual_advanced()
+            self._commit_dump_load(self._pending_dump_load)
+            return await self.async_step_dump_loads()
+
+        return self.async_show_form(
+            step_id="dump_load_manual",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_DUMP_LOAD_NAME,
+                        default=existing.get(CONF_DUMP_LOAD_NAME, ""),
+                    ): str,
+                    vol.Required(
+                        CONF_DUMP_LOAD_AVG_KW,
+                        default=existing.get(
+                            CONF_DUMP_LOAD_AVG_KW, DEFAULT_DUMP_LOAD_AVG_KW
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0.0)),
+                    vol.Required(
+                        CONF_DUMP_LOAD_START_HOUR,
+                        default=existing.get(
+                            CONF_DUMP_LOAD_START_HOUR, DEFAULT_DUMP_LOAD_START_HOUR
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=23)),
+                    vol.Required(
+                        CONF_DUMP_LOAD_END_HOUR,
+                        default=existing.get(
+                            CONF_DUMP_LOAD_END_HOUR, DEFAULT_DUMP_LOAD_END_HOUR
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=24)),
+                    vol.Required(
+                        CONF_DUMP_LOAD_ADVANCED,
+                        default=bool(existing.get(CONF_DUMP_LOAD_HOURLY_PROFILE)),
+                    ): bool,
+                }
+            ),
+        )
+
+    async def async_step_dump_load_manual_advanced(self, user_input=None):
+        """24 hourly kW values (overrides simple window when present)."""
+        pending = self._pending_dump_load or {}
+        existing_profile: list[float] | None = pending.get(CONF_DUMP_LOAD_HOURLY_PROFILE)
+        if not existing_profile:
+            avg = float(pending.get(CONF_DUMP_LOAD_AVG_KW, DEFAULT_DUMP_LOAD_AVG_KW))
+            sh = int(pending.get(CONF_DUMP_LOAD_START_HOUR, DEFAULT_DUMP_LOAD_START_HOUR))
+            eh = int(pending.get(CONF_DUMP_LOAD_END_HOUR, DEFAULT_DUMP_LOAD_END_HOUR))
+            existing_profile = [avg if (sh <= h < eh) else 0.0 for h in range(24)]
+
+        if user_input is not None:
+            profile = [
+                float(user_input.get(f"hour_{h}", 0.0)) for h in range(24)
+            ]
+            assert self._pending_dump_load is not None
+            self._pending_dump_load[CONF_DUMP_LOAD_HOURLY_PROFILE] = profile
+            self._commit_dump_load(self._pending_dump_load)
+            return await self.async_step_dump_loads()
+
+        schema_dict: dict = {}
+        for h in range(24):
+            schema_dict[
+                vol.Required(f"hour_{h}", default=existing_profile[h])
+            ] = vol.All(vol.Coerce(float), vol.Range(min=0.0))
+
+        return self.async_show_form(
+            step_id="dump_load_manual_advanced",
+            data_schema=vol.Schema(schema_dict),
+        )
+
+    async def async_step_dump_load_sensor(self, user_input=None):
+        """Sensor-based dump load: name + power entity (W)."""
+        existing = self._get_editing_load()
+
+        if user_input is not None:
+            self._commit_dump_load(
+                {
+                    CONF_DUMP_LOAD_NAME: user_input[CONF_DUMP_LOAD_NAME],
+                    CONF_DUMP_LOAD_TYPE: DUMP_LOAD_TYPE_SENSOR,
+                    CONF_DUMP_LOAD_POWER_ENTITY: user_input[
+                        CONF_DUMP_LOAD_POWER_ENTITY
+                    ],
+                }
+            )
+            return await self.async_step_dump_loads()
+
+        schema: dict = {
+            vol.Required(
+                CONF_DUMP_LOAD_NAME, default=existing.get(CONF_DUMP_LOAD_NAME, "")
+            ): str,
+        }
+        if existing.get(CONF_DUMP_LOAD_POWER_ENTITY):
+            schema[
+                vol.Required(
+                    CONF_DUMP_LOAD_POWER_ENTITY,
+                    default=existing[CONF_DUMP_LOAD_POWER_ENTITY],
+                )
+            ] = ENTITY_SELECTOR
+        else:
+            schema[vol.Required(CONF_DUMP_LOAD_POWER_ENTITY)] = ENTITY_SELECTOR
+
+        return self.async_show_form(
+            step_id="dump_load_sensor",
+            data_schema=vol.Schema(schema),
+        )
+
+
 class SunriseSocForecastConfigFlow(
-    config_entries.ConfigFlow, domain=DOMAIN
+    DumpLoadFlowMixin, config_entries.ConfigFlow, domain=DOMAIN
 ):
     """Handle a config flow for Sunrise SoC Forecast."""
 
@@ -121,7 +396,7 @@ class SunriseSocForecastConfigFlow(
             self._data.update(user_input)
             if user_input.get(CONF_BACKUP_ENABLED, False):
                 return await self.async_step_backup_details()
-            return await self.async_step_solar_source()
+            return await self.async_step_dump_loads()
 
         return self.async_show_form(
             step_id="backup",
@@ -136,7 +411,7 @@ class SunriseSocForecastConfigFlow(
         """Step 2b: Backup battery details."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_solar_source()
+            return await self.async_step_dump_loads()
 
         return self.async_show_form(
             step_id="backup_details",
@@ -328,12 +603,15 @@ class SunriseSocForecastConfigFlow(
         return SunriseSocOptionsFlow()
 
 
-class SunriseSocOptionsFlow(config_entries.OptionsFlow):
+class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
     """Handle options flow — full reconfiguration of all settings."""
 
     def _get_data(self) -> dict:
         """Get merged data + options with current values."""
         return {**self.config_entry.data, **self.config_entry.options}
+
+    def _get_existing_dump_loads(self) -> list[dict]:
+        return list(self._get_data().get(CONF_DUMP_LOADS, []))
 
     async def async_step_init(self, user_input=None):
         """Step 1: Main battery."""
@@ -381,7 +659,7 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
             self._data.update(user_input)
             if user_input.get(CONF_BACKUP_ENABLED, False):
                 return await self.async_step_backup_details()
-            return await self.async_step_solar_source()
+            return await self.async_step_dump_loads()
 
         data = self._get_data()
 
@@ -401,7 +679,7 @@ class SunriseSocOptionsFlow(config_entries.OptionsFlow):
         """Step 2b: Backup battery details."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_solar_source()
+            return await self.async_step_dump_loads()
 
         data = self._get_data()
 

@@ -79,6 +79,29 @@ SOLAR_DAY_MAP = {
 CONF_FORECAST_DAYS = "forecast_days"
 CONF_TARGET_SOC = "target_soc"
 
+# Dump load configuration
+# Stored as list[dict] under CONF_DUMP_LOADS in entry.data/options.
+# Each item has: name, type (manual|sensor), and type-specific fields.
+CONF_DUMP_LOADS = "dump_loads"
+DUMP_LOAD_TYPE_MANUAL = "manual"
+DUMP_LOAD_TYPE_SENSOR = "sensor"
+
+CONF_DUMP_LOAD_NAME = "name"
+CONF_DUMP_LOAD_TYPE = "type"
+# Manual mode (simple): average kW + start/end hour window
+CONF_DUMP_LOAD_AVG_KW = "avg_kw"
+CONF_DUMP_LOAD_START_HOUR = "start_hour"
+CONF_DUMP_LOAD_END_HOUR = "end_hour"
+# Manual mode (advanced): explicit 24-element kW profile
+CONF_DUMP_LOAD_HOURLY_PROFILE = "hourly_profile"
+CONF_DUMP_LOAD_ADVANCED = "advanced"
+# Sensor mode: power entity (W), integrated by coordinator
+CONF_DUMP_LOAD_POWER_ENTITY = "power_entity"
+
+DEFAULT_DUMP_LOAD_AVG_KW = 1.0
+DEFAULT_DUMP_LOAD_START_HOUR = 9
+DEFAULT_DUMP_LOAD_END_HOUR = 16
+
 # Defaults
 DEFAULT_MAIN_CAPACITY = 128.0
 DEFAULT_MAIN_FLOOR = 5.0
