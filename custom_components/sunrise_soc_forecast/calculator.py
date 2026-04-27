@@ -596,11 +596,13 @@ def predict_day1_daytime(
     if hours_to_sunset > 0:
         # Daytime: ~24 hour simulation, always wraps through midnight
         total_steps = (array_len - start_idx) + end_idx
-    elif end_idx <= start_idx:
+    elif end_idx < start_idx:
         # Nighttime past midnight: wraps (e.g., 23:00 → 06:00)
         total_steps = (array_len - start_idx) + end_idx
     else:
-        # Nighttime before midnight: no wrap (e.g., 20:00 → 06:00 = direct)
+        # Nighttime before sunrise (or right at it): no wrap.
+        # When start_idx == end_idx (current_hour ≈ sunrise_hour), this is 0 —
+        # avoids a spurious 24h overnight drain at the sunrise boundary.
         total_steps = end_idx - start_idx
 
     if total_steps <= 0:

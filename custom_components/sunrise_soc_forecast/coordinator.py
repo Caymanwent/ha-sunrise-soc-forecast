@@ -176,14 +176,21 @@ class SunriseSocCoordinator:
 
     def _get_astral(self) -> tuple:
         """Get sunrise/sunset with caching to avoid redundant astral calls."""
-        now = time.monotonic()
-        if now - self._astral_cache_time < _ASTRAL_CACHE_TTL and self._astral_cache:
-            return self._astral_cache.get("sunrise"), self._astral_cache.get("sunset")
+        mono = time.monotonic()
+        if mono - self._astral_cache_time < _ASTRAL_CACHE_TTL and self._astral_cache:
+            cached_sr = self._astral_cache.get("sunrise")
+            cached_ss = self._astral_cache.get("sunset")
+            # Invalidate if a cached "next event" has fallen into the past —
+            # otherwise is_overnight reads True briefly after sunrise.
+            wall_now = dt_util.now()
+            if (cached_sr is None or cached_sr > wall_now) and \
+               (cached_ss is None or cached_ss > wall_now):
+                return cached_sr, cached_ss
 
         sunrise = get_astral_event_next(self.hass, "sunrise")
         sunset = get_astral_event_next(self.hass, "sunset")
         self._astral_cache = {"sunrise": sunrise, "sunset": sunset}
-        self._astral_cache_time = now
+        self._astral_cache_time = mono
         return sunrise, sunset
 
     @property
