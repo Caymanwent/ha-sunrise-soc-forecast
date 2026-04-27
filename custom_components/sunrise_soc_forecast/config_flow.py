@@ -109,6 +109,10 @@ class DumpLoadFlowMixin:
         """Return dump loads from existing entry — overridden by OptionsFlow."""
         return []
 
+    async def _dump_loads_done(self):
+        """Next step after Continue on the dump-loads menu — override for OptionsFlow."""
+        return await self.async_step_solar_source()
+
     def _ensure_dump_loads_seeded(self) -> None:
         if CONF_DUMP_LOADS not in self._data:
             self._data[CONF_DUMP_LOADS] = [dict(d) for d in self._get_existing_dump_loads()]
@@ -141,7 +145,7 @@ class DumpLoadFlowMixin:
         if user_input is not None:
             action = user_input["action"]
             if action == "continue":
-                return await self.async_step_solar_source()
+                return await self._dump_loads_done()
             if action == "add":
                 self._editing_dump_load_index = None
                 self._pending_dump_load = None
@@ -604,25 +608,56 @@ class SunriseSocForecastConfigFlow(
 
 
 class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
-    """Handle options flow — full reconfiguration of all settings."""
+    """Section-based options flow with a menu landing page.
+
+    Existing users land on a menu and edit one section at a time, instead
+    of walking through every step linearly.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict = {}
 
     def _get_data(self) -> dict:
-        """Get merged data + options with current values."""
-        return {**self.config_entry.data, **self.config_entry.options}
+        """Existing entry values overlaid with edits in progress."""
+        return {
+            **self.config_entry.data,
+            **self.config_entry.options,
+            **self._data,
+        }
 
     def _get_existing_dump_loads(self) -> list[dict]:
         return list(self._get_data().get(CONF_DUMP_LOADS, []))
 
+    def _save_and_exit(self):
+        """Persist the current section's edits, preserving other sections."""
+        merged = {**self.config_entry.options, **self._data}
+        return self.async_create_entry(title="", data=merged)
+
+    async def _dump_loads_done(self):
+        return self._save_and_exit()
+
     async def async_step_init(self, user_input=None):
-        """Step 1: Main battery."""
+        """Menu: pick a section to edit."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=[
+                "main_battery",
+                "backup",
+                "dump_loads",
+                "solar_source",
+                "forecast_options",
+            ],
+        )
+
+    async def async_step_main_battery(self, user_input=None):
+        """Edit main battery settings."""
         if user_input is not None:
-            self._data = user_input
-            return await self.async_step_backup()
+            self._data.update(user_input)
+            return self._save_and_exit()
 
         data = self._get_data()
-
         return self.async_show_form(
-            step_id="init",
+            step_id="main_battery",
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -654,15 +689,14 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
         )
 
     async def async_step_backup(self, user_input=None):
-        """Step 2: Backup battery toggle."""
+        """Toggle backup battery — branches to details or saves & exits."""
         if user_input is not None:
             self._data.update(user_input)
             if user_input.get(CONF_BACKUP_ENABLED, False):
                 return await self.async_step_backup_details()
-            return await self.async_step_dump_loads()
+            return self._save_and_exit()
 
         data = self._get_data()
-
         return self.async_show_form(
             step_id="backup",
             data_schema=vol.Schema(
@@ -676,13 +710,12 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
         )
 
     async def async_step_backup_details(self, user_input=None):
-        """Step 2b: Backup battery details."""
+        """Edit backup battery details."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_dump_loads()
+            return self._save_and_exit()
 
         data = self._get_data()
-
         return self.async_show_form(
             step_id="backup_details",
             data_schema=vol.Schema(
@@ -750,7 +783,7 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
         return options
 
     async def async_step_solar_source(self, user_input=None):
-        """Step 3: Solar forecast source selection."""
+        """Pick solar source — auto-discover or fall through to manual."""
         if user_input is not None:
             selected = user_input.get(CONF_SOLAR_CONFIG_ENTRY, SOLAR_SOURCE_MANUAL)
             if selected == SOLAR_SOURCE_MANUAL:
@@ -783,7 +816,6 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
                 if conf_key:
                     self._data[conf_key] = entity_id
 
-            # Also set legacy Solcast keys for backward compatibility
             if discovered.get("remaining"):
                 self._data[CONF_SOLCAST_REMAINING] = discovered["remaining"]
             if discovered.get("today"):
@@ -798,7 +830,7 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
                     self._data[conf] = discovered[role]
 
             _LOGGER.info("Solar discovery found: %s", {k: v for k, v in discovered.items()})
-            return await self.async_step_options()
+            return self._save_and_exit()
 
         solar_options = self._find_solar_integrations()
 
@@ -806,7 +838,6 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
             self._data[CONF_SOLAR_SOURCE] = SOLAR_SOURCE_MANUAL
             return await self.async_step_solcast()
 
-        # Pre-select the currently configured source
         data = self._get_data()
         current = data.get(CONF_SOLAR_CONFIG_ENTRY, SOLAR_SOURCE_MANUAL)
 
@@ -828,13 +859,12 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
         )
 
     async def async_step_solcast(self, user_input=None):
-        """Step 3b: Manual entity selection (fallback)."""
+        """Manual solar entity selection (fallback)."""
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_options()
+            return self._save_and_exit()
 
         data = self._get_data()
-
         return self.async_show_form(
             step_id="solcast",
             data_schema=vol.Schema(
@@ -875,16 +905,15 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
             ),
         )
 
-    async def async_step_options(self, user_input=None):
-        """Step 4: Forecast options."""
+    async def async_step_forecast_options(self, user_input=None):
+        """Edit forecast options and fallback consumption defaults."""
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(title="", data=self._data)
+            return self._save_and_exit()
 
         data = self._get_data()
-
         return self.async_show_form(
-            step_id="options",
+            step_id="forecast_options",
             data_schema=vol.Schema(
                 {
                     vol.Required(

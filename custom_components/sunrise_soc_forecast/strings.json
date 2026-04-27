@@ -117,6 +117,17 @@
   "options": {
     "step": {
       "init": {
+        "title": "Sunrise SoC Forecast",
+        "description": "Pick a section to edit. Your other settings are preserved.",
+        "menu_options": {
+          "main_battery": "Main battery",
+          "backup": "Backup battery",
+          "dump_loads": "Dump loads",
+          "solar_source": "Solar forecast",
+          "forecast_options": "Forecast options"
+        }
+      },
+      "main_battery": {
         "title": "Main Battery",
         "description": "Reconfigure your main battery system.",
         "data": {
@@ -152,7 +163,7 @@
       },
       "dump_loads": {
         "title": "Dump Loads",
-        "description": "Loads that run only when there is excess solar. Currently configured: {count}. Choose an action to add, edit, or remove a load, or Continue to proceed.",
+        "description": "Loads that run only when there is excess solar. Currently configured: {count}. Choose an action to add, edit, or remove a load, or Continue to save and exit.",
         "data": {
           "action": "Action"
         }
@@ -216,7 +227,7 @@
           "solcast_day_7": "Forecast day 7"
         }
       },
-      "options": {
+      "forecast_options": {
         "title": "Forecast Options",
         "description": "Set forecast range, target SoC, and fallback values.",
         "data": {
