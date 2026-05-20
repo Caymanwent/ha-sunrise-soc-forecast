@@ -37,10 +37,9 @@ content: |
   {% set sr_int = sr_h | int -%}
   {% set ns = namespace(overnight=0) -%}
   {% set ns.overnight = ns.overnight + hourly[ss_int] * (1 - (ss_h - ss_int)) -%}
-  {% for h in range(ss_int + 1, ss_int + 13) -%}
-  {% if h % 24 != sr_int -%}
+  {% for h in range(ss_int + 1, ss_int + 24) -%}
+  {%- if h % 24 == sr_int %}{% break %}{% endif -%}
   {% set ns.overnight = ns.overnight + hourly[h % 24] -%}
-  {% endif -%}
   {% endfor -%}
   {% set ns.overnight = ns.overnight + hourly[sr_int] * (sr_h - sr_int) -%}
   {% endif -%}

@@ -706,15 +706,18 @@ class SunriseSocCoordinator:
             dump_load_profile=dump_load_profile,
         )
 
-        # Days 2-N — always calculate live, only Solcast freezes overnight
+        # Days 2-N — always calculate live, only Solcast freezes post-midnight.
+        # Pre-midnight (incl. evening overnight) reads live: entities are still
+        # aligned with the original dates, so frozen would just shadow fresher
+        # values that the user expects to flow through.
+        post_midnight = overnight and now.hour < 12
         for day in range(2, self.num_days + 1):
             prev_kwh = self.results.get(day - 1, DayResult(0, 0)).predicted_kwh
 
-            # Use frozen solar during overnight to prevent midnight shift
-            if overnight and day in self._frozen_solcast and self._frozen_solcast[day] > 0:
+            if post_midnight and day in self._frozen_solcast and self._frozen_solcast[day] > 0:
                 solar = self._frozen_solcast[day]
                 solar_hourly = self._frozen_solcast_hourly.get(day)
-            elif overnight and now.hour < 12:
+            elif post_midnight:
                 # Post-midnight with no valid frozen data — skip this day
                 # to avoid reading shifted entities that have wrong day's data
                 if day in self.results:
