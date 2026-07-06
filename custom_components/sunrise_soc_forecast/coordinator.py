@@ -18,6 +18,7 @@ from .calculator import (
     BackupConfig,
     ConsumptionData,
     DayResult,
+    SocDumpLoad,
     get_consumption,
     get_overnight_params,
     predict_day1_daytime,
@@ -75,6 +76,10 @@ from .const import (
     CONF_DUMP_LOAD_END_HOUR,
     CONF_DUMP_LOAD_HOURLY_PROFILE,
     CONF_DUMP_LOAD_POWER_ENTITY,
+    CONF_DUMP_LOAD_ENGAGE_SOC,
+    CONF_DUMP_LOAD_REVERT_SOC,
+    CONF_DUMP_LOAD_STATE_ENTITY,
+    DEFAULT_DUMP_LOAD_REVERT_GAP,
     DUMP_LOAD_TYPE_MANUAL,
     DUMP_LOAD_TYPE_SENSOR,
     DEFAULT_DUMP_LOAD_AVG_KW,
@@ -311,6 +316,26 @@ class SunriseSocCoordinator:
                 tracker["current_hour"] = None
             else:
                 continue
+
+            # Optional SoC-aware gating (either load type). engage_soc > 0
+            # switches this load from the solar-vs-base gate to the simulated
+            # SoC hysteresis gate in the calculator.
+            try:
+                engage = float(item.get(CONF_DUMP_LOAD_ENGAGE_SOC) or 0.0)
+            except (ValueError, TypeError):
+                engage = 0.0
+            if engage > 0:
+                try:
+                    revert = float(
+                        item.get(CONF_DUMP_LOAD_REVERT_SOC)
+                        or (engage - DEFAULT_DUMP_LOAD_REVERT_GAP)
+                    )
+                except (ValueError, TypeError):
+                    revert = engage - DEFAULT_DUMP_LOAD_REVERT_GAP
+                tracker["engage_soc"] = engage
+                tracker["revert_soc"] = max(0.0, min(revert, engage))
+                tracker["state_entity"] = item.get(CONF_DUMP_LOAD_STATE_ENTITY, "")
+
             loads.append(tracker)
         return loads
 
@@ -353,28 +378,72 @@ class SunriseSocCoordinator:
         tracker["last_power"] = power_kw
         tracker["last_time"] = now
 
-    def get_dump_load_profile(self) -> list[float]:
-        """Return per-hour expected dump-load kW (sum across all loads).
+    @staticmethod
+    def _tracker_profile(tracker: dict[str, Any]) -> list[float]:
+        """Per-hour expected kWh for one dump load.
 
-        Manual loads contribute their fixed 24-element profile. Sensor loads
-        contribute the average of their 7-day hourly history (kWh per hour =
-        average kW for that hour). Returns 24 zeros if no loads configured.
+        Manual loads return their fixed 24-element profile. Sensor loads
+        return the average of their 7-day hourly history (kWh per hour =
+        average kW for that hour).
         """
         profile = [0.0] * 24
-        if not self.dump_loads:
-            return profile
-        for tracker in self.dump_loads:
-            t = tracker.get("type")
-            if t == DUMP_LOAD_TYPE_MANUAL:
-                load_profile = tracker.get("profile") or [0.0] * 24
-                for h in range(24):
-                    profile[h] += float(load_profile[h])
-            elif t == DUMP_LOAD_TYPE_SENSOR:
-                history = tracker.get("hourly_history") or []
-                for h in range(24):
-                    if h < len(history) and history[h]:
-                        profile[h] += sum(history[h]) / len(history[h])
+        t = tracker.get("type")
+        if t == DUMP_LOAD_TYPE_MANUAL:
+            load_profile = tracker.get("profile") or [0.0] * 24
+            for h in range(24):
+                profile[h] = float(load_profile[h])
+        elif t == DUMP_LOAD_TYPE_SENSOR:
+            history = tracker.get("hourly_history") or []
+            for h in range(24):
+                if h < len(history) and history[h]:
+                    profile[h] = sum(history[h]) / len(history[h])
         return profile
+
+    def get_dump_load_profile(self) -> list[float]:
+        """Return per-hour expected dump-load kWh summed across the loads
+        that use the solar-vs-base gate (i.e. loads without SoC thresholds).
+
+        SoC-gated loads are excluded — they go through get_soc_dump_loads()
+        and the calculator's hysteresis state machine instead.
+        Returns 24 zeros if no such loads are configured.
+        """
+        profile = [0.0] * 24
+        for tracker in self.dump_loads:
+            if tracker.get("engage_soc"):
+                continue
+            tp = self._tracker_profile(tracker)
+            for h in range(24):
+                profile[h] += tp[h]
+        return profile
+
+    def get_soc_dump_loads(self, seed_live: bool = False) -> list[SocDumpLoad]:
+        """Build calculator descriptors for SoC-gated dump loads.
+
+        With seed_live=True (Day 1), a configured state entity that is
+        currently "on" seeds the simulation's hysteresis state — resolving
+        the ambiguity when the live battery sits inside the engage/revert
+        band. Days 2-7 start inactive at sunrise.
+        """
+        result: list[SocDumpLoad] = []
+        for tracker in self.dump_loads:
+            engage = tracker.get("engage_soc")
+            if not engage:
+                continue
+            active = False
+            if seed_live:
+                entity_id = tracker.get("state_entity") or ""
+                if entity_id:
+                    state = self.hass.states.get(entity_id)
+                    active = state is not None and state.state == "on"
+            result.append(
+                SocDumpLoad(
+                    profile=self._tracker_profile(tracker),
+                    engage_soc=float(engage),
+                    revert_soc=float(tracker.get("revert_soc", 0.0)),
+                    initially_active=active,
+                )
+            )
+        return result
 
     def _on_sunrise(self) -> None:
         """Handle sunrise: record overnight consumption, reset accumulator."""
@@ -639,6 +708,8 @@ class SunriseSocCoordinator:
         consumption = self.get_consumption()
         hourly_avg = self.get_hourly_averages()
         dump_load_profile = self.get_dump_load_profile()
+        soc_dump_loads_day1 = self.get_soc_dump_loads(seed_live=True)
+        soc_dump_loads_future = self.get_soc_dump_loads(seed_live=False)
 
         # Get sunrise/sunset hours for hourly model
         sunrise_local = sunrise.astimezone()
@@ -704,6 +775,7 @@ class SunriseSocCoordinator:
             backup_charge_efficiency=self.backup_charge_efficiency,
             backup_discharge_efficiency=self.backup_discharge_efficiency,
             dump_load_profile=dump_load_profile,
+            soc_dump_loads=soc_dump_loads_day1,
         )
 
         # Days 2-N — always calculate live, only Solcast freezes post-midnight.
@@ -744,6 +816,7 @@ class SunriseSocCoordinator:
                 backup_charge_efficiency=self.backup_charge_efficiency,
                 backup_discharge_efficiency=self.backup_discharge_efficiency,
                 dump_load_profile=dump_load_profile,
+                soc_dump_loads=soc_dump_loads_future,
             )
 
         # Calculate grid needed for each day

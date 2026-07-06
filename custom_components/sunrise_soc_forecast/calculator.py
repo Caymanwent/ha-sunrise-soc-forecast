@@ -51,6 +51,24 @@ class ConsumptionData:
 
 
 @dataclass
+class SocDumpLoad:
+    """A dump load driven by battery SoC thresholds.
+
+    Models an automation that engages a load when the battery is nearly full
+    (e.g. >= 99%) and reverts when it drops below a lower threshold (e.g. < 96%).
+    The simulation runs the same hysteresis state machine on the simulated
+    battery, so the load's energy enters the forecast continuously — engaging
+    a bit earlier when the forecast is sunnier — instead of flipping whole
+    hours on a solar-vs-base threshold.
+    """
+
+    profile: list[float]  # 24-element kWh-per-hour drawn while the load runs
+    engage_soc: float  # percent — simulated load turns on at/above this SoC
+    revert_soc: float  # percent — simulated load turns off below this SoC
+    initially_active: bool = False  # Day-1 seed from the live state entity
+
+
+@dataclass
 class OvernightParams:
     """Overnight calculation parameters."""
 
@@ -568,12 +586,17 @@ def predict_day1_daytime(
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
     dump_load_profile: list[float] | None = None,
+    soc_dump_loads: list[SocDumpLoad] | None = None,
 ) -> DayResult:
     """Day 1 prediction: continuous simulation from current time to next sunrise.
 
     One loop from now to sunrise — solar curve naturally tapers to zero after
     sunset, consumption and backup assist continue through the night. No separate
     daytime/nighttime phases or handoff.
+
+    dump_load_profile carries loads gated per-hour on solar covering the base
+    consumption. soc_dump_loads carries loads gated by the simulated battery
+    SoC crossing their engage/revert thresholds (daylight only).
     """
 
     eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
@@ -636,6 +659,14 @@ def predict_day1_daytime(
             h = (j // steps_per_hour) % 24
             solar_per_hour[h] += v
 
+    # SoC-gated dump loads: hysteresis state per load, seeded from the live
+    # entity for Day 1 (initially_active). Only loads with a valid 24h profile.
+    soc_loads = [
+        ld for ld in (soc_dump_loads or [])
+        if ld.profile and len(ld.profile) == 24
+    ]
+    soc_load_active = [ld.initially_active for ld in soc_loads]
+
     # Backup setup
     backup_current = 0.0
     if backup.enabled:
@@ -686,18 +717,45 @@ def predict_day1_daytime(
         solar_val = solar_array[idx] if idx < len(solar_array) else 0.0
         solar_scaled = solar_val * (frac / step_hours) if step_hours > 0 else 0.0
 
-        # Consumption — gate dump loads against solar availability per hour.
-        # Recorded consumption already includes the dump load when it ran;
-        # if solar can't cover the base (consumption - dump_load), assume the
-        # dump load is shut off this hour and use base only.
+        # Update SoC-gated dump-load state machines — hysteresis on the
+        # simulated battery, daylight only (these loads soak solar surplus
+        # and their automations revert at sunset).
+        if soc_loads:
+            soc_pct_now = (
+                battery / main.capacity_kwh * 100 if main.capacity_kwh > 0 else 0.0
+            )
+            for k, ld in enumerate(soc_loads):
+                if solar_val <= 0:
+                    soc_load_active[k] = False
+                elif soc_load_active[k]:
+                    if soc_pct_now < ld.revert_soc:
+                        soc_load_active[k] = False
+                elif soc_pct_now >= ld.engage_soc:
+                    soc_load_active[k] = True
+
+        # Consumption — remove each dump load's energy from the recorded
+        # bucket (capped at what the bucket actually holds), then add it
+        # back per its gate. Solar-gated loads run only if solar covers the
+        # base that hour; SoC-gated loads run only while their simulated
+        # state machine is on. Removal caps keep the simulated hour from
+        # ever exceeding the recorded bucket.
         if hourly_consumption and len(hourly_consumption) == 24:
-            cons_kwh = hourly_consumption[hour]
-            if have_dump:
-                dump = dump_load_profile[hour]
-                if dump > 0:
-                    base = max(0.0, cons_kwh - dump)
-                    if solar_per_hour[hour] < base:
-                        cons_kwh = base
+            remainder = hourly_consumption[hour]
+            removed_solar_gated = 0.0
+            if have_dump and dump_load_profile[hour] > 0:
+                removed_solar_gated = min(dump_load_profile[hour], remainder)
+                remainder -= removed_solar_gated
+            soc_dump_hour = 0.0
+            for k, ld in enumerate(soc_loads):
+                if ld.profile[hour] > 0:
+                    removed = min(ld.profile[hour], remainder)
+                    remainder -= removed
+                    if soc_load_active[k]:
+                        soc_dump_hour += removed
+            base = remainder
+            cons_kwh = base + soc_dump_hour
+            if removed_solar_gated > 0 and solar_per_hour[hour] >= base:
+                cons_kwh += removed_solar_gated
             cons_dc = cons_kwh * frac / eff
         else:
             cons_dc = 0.0
@@ -777,6 +835,7 @@ def predict_future_day(
     backup_charge_efficiency: float = 1.0,
     backup_discharge_efficiency: float = 1.0,
     dump_load_profile: list[float] | None = None,
+    soc_dump_loads: list[SocDumpLoad] | None = None,
 ) -> DayResult:
     """Predict SoC for Days 2-7 using the same continuous loop as Day 1."""
     return predict_day1_daytime(
@@ -798,4 +857,5 @@ def predict_future_day(
         backup_charge_efficiency=backup_charge_efficiency,
         backup_discharge_efficiency=backup_discharge_efficiency,
         dump_load_profile=dump_load_profile,
+        soc_dump_loads=soc_dump_loads,
     )

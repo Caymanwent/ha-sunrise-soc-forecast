@@ -57,7 +57,10 @@
           "avg_kw": "Average power while running (kW)",
           "start_hour": "Earliest run hour (0-23)",
           "end_hour": "Latest run hour (1-24, exclusive)",
-          "advanced": "Configure 24-hour profile (advanced)"
+          "advanced": "Configure 24-hour profile (advanced)",
+          "engage_soc": "SoC-aware gate: engage at battery SoC (%) — leave empty to gate on solar instead",
+          "revert_soc": "SoC-aware gate: revert below battery SoC (%)",
+          "state_entity": "Live state entity for this load (seeds today's forecast)"
         }
       },
       "dump_load_manual_advanced": {
@@ -77,7 +80,10 @@
         "description": "Select a power sensor (W) for this load. The integration will track its energy automatically and build a 7-day rolling hourly profile.",
         "data": {
           "name": "Load name",
-          "power_entity": "Power sensor (W)"
+          "power_entity": "Power sensor (W)",
+          "engage_soc": "SoC-aware gate: engage at battery SoC (%) — leave empty to gate on solar instead",
+          "revert_soc": "SoC-aware gate: revert below battery SoC (%)",
+          "state_entity": "Live state entity for this load (seeds today's forecast)"
         }
       },
       "solar_source": {
@@ -183,7 +189,10 @@
           "avg_kw": "Average power while running (kW)",
           "start_hour": "Earliest run hour (0-23)",
           "end_hour": "Latest run hour (1-24, exclusive)",
-          "advanced": "Configure 24-hour profile (advanced)"
+          "advanced": "Configure 24-hour profile (advanced)",
+          "engage_soc": "SoC-aware gate: engage at battery SoC (%) — leave empty to gate on solar instead",
+          "revert_soc": "SoC-aware gate: revert below battery SoC (%)",
+          "state_entity": "Live state entity for this load (seeds today's forecast)"
         }
       },
       "dump_load_manual_advanced": {
@@ -203,7 +212,10 @@
         "description": "Select a power sensor (W) for this load. The integration will track its energy automatically and build a 7-day rolling hourly profile.",
         "data": {
           "name": "Load name",
-          "power_entity": "Power sensor (W)"
+          "power_entity": "Power sensor (W)",
+          "engage_soc": "SoC-aware gate: engage at battery SoC (%) — leave empty to gate on solar instead",
+          "revert_soc": "SoC-aware gate: revert below battery SoC (%)",
+          "state_entity": "Live state entity for this load (seeds today's forecast)"
         }
       },
       "solar_source": {

@@ -77,6 +77,9 @@ from .const import (
     CONF_DUMP_LOAD_HOURLY_PROFILE,
     CONF_DUMP_LOAD_ADVANCED,
     CONF_DUMP_LOAD_POWER_ENTITY,
+    CONF_DUMP_LOAD_ENGAGE_SOC,
+    CONF_DUMP_LOAD_REVERT_SOC,
+    CONF_DUMP_LOAD_STATE_ENTITY,
     DUMP_LOAD_TYPE_MANUAL,
     DUMP_LOAD_TYPE_SENSOR,
     DEFAULT_DUMP_LOAD_AVG_KW,
@@ -89,6 +92,20 @@ _LOGGER = logging.getLogger(__name__)
 
 ENTITY_SELECTOR = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
+)
+
+# Entity reflecting a dump load's live on/off state (for Day-1 seeding)
+STATE_ENTITY_SELECTOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(
+        domain=["input_boolean", "switch", "binary_sensor"]
+    )
+)
+
+SOC_PERCENT_SELECTOR = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=0, max=100, step=0.5, unit_of_measurement="%",
+        mode=selector.NumberSelectorMode.BOX,
+    )
 )
 
 
@@ -124,6 +141,37 @@ class DumpLoadFlowMixin:
         if 0 <= self._editing_dump_load_index < len(loads):
             return loads[self._editing_dump_load_index]
         return {}
+
+    @staticmethod
+    def _soc_gate_schema(existing: dict) -> dict:
+        """Optional SoC-gating fields shared by both dump-load forms."""
+        schema: dict = {}
+        for key, sel in (
+            (CONF_DUMP_LOAD_ENGAGE_SOC, SOC_PERCENT_SELECTOR),
+            (CONF_DUMP_LOAD_REVERT_SOC, SOC_PERCENT_SELECTOR),
+            (CONF_DUMP_LOAD_STATE_ENTITY, STATE_ENTITY_SELECTOR),
+        ):
+            if existing.get(key) not in (None, ""):
+                schema[vol.Optional(key, default=existing[key])] = sel
+            else:
+                schema[vol.Optional(key)] = sel
+        return schema
+
+    @staticmethod
+    def _apply_soc_gate(load: dict, user_input: dict) -> None:
+        """Copy SoC-gating fields from user_input into the load dict.
+
+        Fields left empty are omitted, which disables SoC gating (the load
+        falls back to the solar-vs-base gate).
+        """
+        for key in (
+            CONF_DUMP_LOAD_ENGAGE_SOC,
+            CONF_DUMP_LOAD_REVERT_SOC,
+            CONF_DUMP_LOAD_STATE_ENTITY,
+        ):
+            val = user_input.get(key)
+            if val not in (None, ""):
+                load[key] = val
 
     def _commit_dump_load(self, load: dict) -> None:
         loads = self._data[CONF_DUMP_LOADS]
@@ -247,6 +295,7 @@ class DumpLoadFlowMixin:
                 CONF_DUMP_LOAD_START_HOUR: user_input[CONF_DUMP_LOAD_START_HOUR],
                 CONF_DUMP_LOAD_END_HOUR: user_input[CONF_DUMP_LOAD_END_HOUR],
             }
+            self._apply_soc_gate(self._pending_dump_load, user_input)
             if advanced:
                 if existing.get(CONF_DUMP_LOAD_HOURLY_PROFILE):
                     self._pending_dump_load[CONF_DUMP_LOAD_HOURLY_PROFILE] = list(
@@ -286,6 +335,7 @@ class DumpLoadFlowMixin:
                         CONF_DUMP_LOAD_ADVANCED,
                         default=bool(existing.get(CONF_DUMP_LOAD_HOURLY_PROFILE)),
                     ): bool,
+                    **self._soc_gate_schema(existing),
                 }
             ),
         )
@@ -325,15 +375,15 @@ class DumpLoadFlowMixin:
         existing = self._get_editing_load()
 
         if user_input is not None:
-            self._commit_dump_load(
-                {
-                    CONF_DUMP_LOAD_NAME: user_input[CONF_DUMP_LOAD_NAME],
-                    CONF_DUMP_LOAD_TYPE: DUMP_LOAD_TYPE_SENSOR,
-                    CONF_DUMP_LOAD_POWER_ENTITY: user_input[
-                        CONF_DUMP_LOAD_POWER_ENTITY
-                    ],
-                }
-            )
+            load = {
+                CONF_DUMP_LOAD_NAME: user_input[CONF_DUMP_LOAD_NAME],
+                CONF_DUMP_LOAD_TYPE: DUMP_LOAD_TYPE_SENSOR,
+                CONF_DUMP_LOAD_POWER_ENTITY: user_input[
+                    CONF_DUMP_LOAD_POWER_ENTITY
+                ],
+            }
+            self._apply_soc_gate(load, user_input)
+            self._commit_dump_load(load)
             return await self.async_step_dump_loads()
 
         schema: dict = {
@@ -350,6 +400,7 @@ class DumpLoadFlowMixin:
             ] = ENTITY_SELECTOR
         else:
             schema[vol.Required(CONF_DUMP_LOAD_POWER_ENTITY)] = ENTITY_SELECTOR
+        schema.update(self._soc_gate_schema(existing))
 
         return self.async_show_form(
             step_id="dump_load_sensor",

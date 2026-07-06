@@ -97,8 +97,18 @@ CONF_DUMP_LOAD_HOURLY_PROFILE = "hourly_profile"
 CONF_DUMP_LOAD_ADVANCED = "advanced"
 # Sensor mode: power entity (W), integrated by coordinator
 CONF_DUMP_LOAD_POWER_ENTITY = "power_entity"
+# Optional SoC-aware gating (any type): the simulation engages the load when
+# the simulated battery reaches engage_soc and reverts below revert_soc,
+# mirroring the user's automation instead of the solar-vs-base proxy.
+CONF_DUMP_LOAD_ENGAGE_SOC = "engage_soc"
+CONF_DUMP_LOAD_REVERT_SOC = "revert_soc"
+# Optional entity (input_boolean/switch) reflecting the live load state,
+# used to seed the Day-1 simulation inside the hysteresis band.
+CONF_DUMP_LOAD_STATE_ENTITY = "state_entity"
 
 DEFAULT_DUMP_LOAD_AVG_KW = 1.0
+# If engage_soc is set but revert_soc is not, revert defaults to engage minus this gap
+DEFAULT_DUMP_LOAD_REVERT_GAP = 3.0
 DEFAULT_DUMP_LOAD_START_HOUR = 9
 DEFAULT_DUMP_LOAD_END_HOUR = 16
 
