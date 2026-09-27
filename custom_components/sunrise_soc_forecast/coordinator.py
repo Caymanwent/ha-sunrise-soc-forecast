@@ -32,6 +32,8 @@ from .const import (
     CONF_BACKUP_ENABLED,
     CONF_BACKUP_SOC_ENTITY,
     CONF_BACKUP_DISCHARGE_ENTITY,
+    CONF_BACKUP_CHARGE_POWER_ENTITY,
+    CONF_EV_DC_CHARGER_POWER_ENTITY,
     CONF_BACKUP_CAPACITY,
     CONF_BACKUP_FLOOR,
     CONF_BACKUP_DISCHARGE_KW,
@@ -89,6 +91,79 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def power_state_to_kw(value: float, unit: str | None) -> float:
+    """Convert a power reading to kW using its unit_of_measurement.
+
+    W is assumed when the unit is missing (the historical behaviour of the
+    house-load sensor). Some integrations (e.g. Sigenergy) report kW.
+    """
+    if unit is None:
+        return value / 1000.0
+    u = unit.strip().lower()
+    if u == "kw":
+        return value
+    if u == "mw":
+        return value * 1000.0
+    return value / 1000.0
+
+
+def backup_to_ev_kw(backup_power_kw: float, ev_dc_power_kw: float) -> float:
+    """Backup-battery energy going straight into an EV over a DC charger.
+
+    A DC charger on the backup system (e.g. Sigenergy's bidirectional DC
+    charger) feeds the car from the backup battery's DC bus. The main
+    system's house-load sensor never sees that energy, yet it is home use:
+    the backup is refilled from the main later. Same rule as the historical
+    power dashboard's "Battery Discharge During EV Charge": while the charger
+    is charging the car (ev > 0) and the backup is discharging (backup < 0),
+    the discharge is counted — capped at the charger's power so the term can
+    never contain anything but what went to the car. Vehicle-to-home (ev < 0)
+    and plain overnight relief contribute nothing here.
+    """
+    discharge = max(0.0, -backup_power_kw)
+    ev = max(0.0, ev_dc_power_kw)
+    if discharge <= 0.0 or ev <= 0.0:
+        return 0.0
+    return min(discharge, ev)
+
+
+def ev_to_backup_kw(backup_power_kw: float, ev_dc_power_kw: float) -> float:
+    """Backup-battery charge that came from the car (vehicle-to-home), not the main.
+
+    Mirror of backup_to_ev_kw. While the DC charger discharges the car
+    (ev < 0) and the backup battery charges (backup > 0), that charge was
+    sourced from the car: the main system supplied none of it, so it must
+    NOT be excluded from house load as main-fed charging would be. Capped at
+    the V2H power; any charge above it is main-fed and stays excluded.
+    """
+    charge = max(0.0, backup_power_kw)
+    v2h = max(0.0, -ev_dc_power_kw)
+    if charge <= 0.0 or v2h <= 0.0:
+        return 0.0
+    return min(charge, v2h)
+
+
+def net_house_load_kw(
+    house_kw: float, backup_charge_kw: float, backup_to_ev: float = 0.0
+) -> float:
+    """House load with backup-battery charging removed and backup→EV added.
+
+    When the backup charges from the main system's AC output, the house-load
+    sensor sees that as consumption. It is not: it is a transfer into the
+    backup that comes back as overnight relief, and the simulation already
+    charges the backup from surplus. Counting it as load would drain the
+    simulated main battery twice. Only the charging direction (positive
+    power) is removed; discharge is left to the explicit relief model.
+
+    ``backup_to_ev`` (see backup_to_ev_kw) is the one kind of backup
+    discharge that IS house load: energy the main never saw because it went
+    backup → DC charger → car. It is added so the buckets hold true home use.
+    """
+    charge = max(0.0, backup_charge_kw)
+    return max(0.0, house_kw - charge + max(0.0, backup_to_ev))
+
+
 # Cache TTL for astral calculations (seconds)
 _ASTRAL_CACHE_TTL = 60
 
@@ -145,6 +220,9 @@ class SunriseSocCoordinator:
         self._grid_energy_today_kwh: float = 0.0
         self._last_power_reading: float | None = None
         self._last_power_time: datetime | None = None
+        # Diagnostics of the last house-load adjustment (kW), see accumulate_energy
+        self.last_backup_charge_kw: float = 0.0
+        self.last_backup_to_ev_kw: float = 0.0
         self._last_grid_reading: float | None = None
         self._last_grid_time: datetime | None = None
         self._was_overnight: bool = False
@@ -218,12 +296,45 @@ class SunriseSocCoordinator:
         except (ValueError, TypeError):
             return default
 
+    def get_power_kw(self, entity_id: str) -> float:
+        """Get a power sensor in kW, honouring its unit_of_measurement."""
+        if not entity_id:
+            return 0.0
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return 0.0
+        try:
+            value = float(state.state)
+        except (ValueError, TypeError):
+            return 0.0
+        return power_state_to_kw(value, state.attributes.get("unit_of_measurement"))
+
     def accumulate_energy(self) -> None:
-        """Accumulate energy from the house load power sensor."""
+        """Accumulate energy from the house load power sensor.
+
+        If a backup charge power sensor is configured, backup charging is
+        removed from the reading first so the hourly buckets hold true house
+        consumption (see net_house_load_kw).
+        """
         now = dt_util.now()
         current_hour = now.hour
-        power_w = self.get_state_float(self.config[CONF_MAIN_POWER_ENTITY])
-        power_kw = power_w / 1000.0
+        power_kw = self.get_power_kw(self.config[CONF_MAIN_POWER_ENTITY])
+        charge_entity = self.config.get(CONF_BACKUP_CHARGE_POWER_ENTITY, "")
+        ev_entity = self.config.get(CONF_EV_DC_CHARGER_POWER_ENTITY, "")
+        self.last_backup_charge_kw = 0.0
+        self.last_backup_to_ev_kw = 0.0
+        if self.backup.enabled and charge_entity:
+            backup_kw = self.get_power_kw(charge_entity)  # + charging, − discharging
+            self.last_backup_charge_kw = max(0.0, backup_kw)
+            if ev_entity:
+                ev_kw = self.get_power_kw(ev_entity)  # + charging car, − vehicle-to-home
+                self.last_backup_to_ev_kw = backup_to_ev_kw(backup_kw, ev_kw)
+                # Charge fed by the car (V2H) was never main-side load: keep it
+                # in the reading instead of excluding it as main-fed charging.
+                self.last_backup_charge_kw -= ev_to_backup_kw(backup_kw, ev_kw)
+            power_kw = net_house_load_kw(
+                power_kw, self.last_backup_charge_kw, self.last_backup_to_ev_kw
+            )
         overnight = self.is_overnight
 
         # Initialize current hour on first call

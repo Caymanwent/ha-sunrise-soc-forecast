@@ -26,6 +26,8 @@
         "data": {
           "backup_soc_entity": "Backup battery SoC sensor (%)",
           "backup_discharge_entity": "Backup discharge power sensor (kW)",
+          "backup_charge_power_entity": "Backup charge power sensor (optional; W or kW, positive = charging). Charging is excluded from house load",
+          "ev_dc_charger_power_entity": "EV DC charger power sensor (optional, needs the backup charge power sensor; W or kW, positive = charging the car). While the car charges over DC and the backup battery discharges, that discharge is added back to house load — the main system never sees it. Vehicle-to-home charge into the backup is not excluded",
           "backup_capacity": "Backup capacity (kWh)",
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
@@ -158,6 +160,8 @@
         "data": {
           "backup_soc_entity": "Backup battery SoC sensor (%)",
           "backup_discharge_entity": "Backup discharge power sensor (kW)",
+          "backup_charge_power_entity": "Backup charge power sensor (optional; W or kW, positive = charging). Charging is excluded from house load",
+          "ev_dc_charger_power_entity": "EV DC charger power sensor (optional, needs the backup charge power sensor; W or kW, positive = charging the car). While the car charges over DC and the backup battery discharges, that discharge is added back to house load — the main system never sees it. Vehicle-to-home charge into the backup is not excluded",
           "backup_capacity": "Backup capacity (kWh)",
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",

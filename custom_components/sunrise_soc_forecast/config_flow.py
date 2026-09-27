@@ -18,6 +18,8 @@ from .const import (
     CONF_BACKUP_ENABLED,
     CONF_BACKUP_SOC_ENTITY,
     CONF_BACKUP_DISCHARGE_ENTITY,
+    CONF_BACKUP_CHARGE_POWER_ENTITY,
+    CONF_EV_DC_CHARGER_POWER_ENTITY,
     CONF_BACKUP_CAPACITY,
     CONF_BACKUP_FLOOR,
     CONF_BACKUP_DISCHARGE_KW,
@@ -474,6 +476,8 @@ class SunriseSocForecastConfigFlow(
                 {
                     vol.Required(CONF_BACKUP_SOC_ENTITY): ENTITY_SELECTOR,
                     vol.Required(CONF_BACKUP_DISCHARGE_ENTITY): ENTITY_SELECTOR,
+                    vol.Optional(CONF_BACKUP_CHARGE_POWER_ENTITY): ENTITY_SELECTOR,
+                    vol.Optional(CONF_EV_DC_CHARGER_POWER_ENTITY): ENTITY_SELECTOR,
                     vol.Required(
                         CONF_BACKUP_CAPACITY, default=DEFAULT_BACKUP_CAPACITY
                     ): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
@@ -764,6 +768,11 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
         """Edit backup battery details."""
         if user_input is not None:
             self._data.update(user_input)
+            # A cleared optional entity selector is omitted from user_input;
+            # write "" so the merge in _save_and_exit overrides the old value.
+            for key in (CONF_BACKUP_CHARGE_POWER_ENTITY, CONF_EV_DC_CHARGER_POWER_ENTITY):
+                if key not in user_input:
+                    self._data[key] = ""
             return self._save_and_exit()
 
         data = self._get_data()
@@ -778,6 +787,14 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
                     vol.Required(
                         CONF_BACKUP_DISCHARGE_ENTITY,
                         default=data.get(CONF_BACKUP_DISCHARGE_ENTITY),
+                    ): ENTITY_SELECTOR,
+                    vol.Optional(
+                        CONF_BACKUP_CHARGE_POWER_ENTITY,
+                        description={"suggested_value": data.get(CONF_BACKUP_CHARGE_POWER_ENTITY)},
+                    ): ENTITY_SELECTOR,
+                    vol.Optional(
+                        CONF_EV_DC_CHARGER_POWER_ENTITY,
+                        description={"suggested_value": data.get(CONF_EV_DC_CHARGER_POWER_ENTITY)},
                     ): ENTITY_SELECTOR,
                     vol.Required(
                         CONF_BACKUP_CAPACITY,
