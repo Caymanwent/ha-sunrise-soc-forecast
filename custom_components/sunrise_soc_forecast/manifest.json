@@ -1,12 +1,14 @@
 {
   "domain": "sunrise_soc_forecast",
   "name": "Sunrise SoC Forecast",
-  "codeowners": ["@Caymanwent"],
+  "codeowners": [
+    "@Caymanwent"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/Caymanwent/ha-sunrise-soc-forecast",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Caymanwent/ha-sunrise-soc-forecast/issues",
   "requirements": [],
-  "version": "3.2.0-beta"
+  "version": "3.2.2-beta"
 }

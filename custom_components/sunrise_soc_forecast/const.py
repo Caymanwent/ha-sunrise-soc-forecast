@@ -16,6 +16,14 @@ CONF_BACKUP_SOC_ENTITY = "backup_soc_entity"
 CONF_BACKUP_DISCHARGE_ENTITY = "backup_discharge_entity"
 CONF_BACKUP_CHARGE_POWER_ENTITY = "backup_charge_power_entity"  # optional; charging excluded from house load
 CONF_EV_DC_CHARGER_POWER_ENTITY = "ev_dc_charger_power_entity"  # optional; backup→EV DC energy added back to house load
+CONF_HOUSE_LOAD_NET_OF_BACKUP = "house_load_net_of_backup"  # optional; house sensor is the main inverter output: add backup relief back in the relief window
+# Load shedding (3.2.2-beta): hours during which the home was deliberately shedding load because of a low
+# forecast are NOT recorded into the 7-day consumption profile (they would teach the forecast a reduced
+# consumption and make it optimistic — the unsafe direction). Active when the Day-2 morning-low forecast is
+# below the threshold (0 = disabled) or any of the listed entities is 'on'.
+CONF_SHED_THRESHOLD_PCT = "shed_threshold_pct"
+CONF_SHED_ENTITIES = "shed_entities"
+DEFAULT_SHED_THRESHOLD_PCT = 0.0
 CONF_BACKUP_CAPACITY = "backup_capacity"
 CONF_BACKUP_FLOOR = "backup_floor"
 CONF_BACKUP_DISCHARGE_KW = "backup_discharge_kw"

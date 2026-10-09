@@ -107,6 +107,12 @@ class SunriseSocSensor(SensorEntity):
             attrs["solcast_kwh"] = result.solcast_kwh
             attrs["morning_low_kwh"] = result.morning_low_kwh
             attrs["morning_low_pct"] = result.morning_low_pct
+            if self._day == 2 and (
+                self._coordinator.shed_threshold_pct > 0 or self._coordinator.shed_entities
+            ):
+                # load-shedding diagnostics live on the Day-2 sensor (the one the automations key on)
+                attrs["shed_active"] = self._coordinator.shed_active
+                attrs["shed_hours_skipped"] = self._coordinator.shed_hours_skipped
             if result.floor_hour:
                 attrs["floor_hour"] = result.floor_hour
             if result.night_floor_hour:

@@ -28,6 +28,7 @@
           "backup_discharge_entity": "Backup discharge power sensor (kW)",
           "backup_charge_power_entity": "Backup charge power sensor (optional; W or kW, positive = charging). Charging is excluded from house load",
           "ev_dc_charger_power_entity": "EV DC charger power sensor (optional, needs the backup charge power sensor; W or kW, positive = charging the car). While the car charges over DC and the backup battery discharges, that discharge is added back to house load — the main system never sees it. Vehicle-to-home charge into the backup is not excluded",
+          "house_load_net_of_backup": "House load sensor is the main inverter's output (optional). Tick when the sensor already EXCLUDES the backup battery's overnight help (e.g. an EG4 'output power' with a Sigen backup feeding the house). From the activation hour to sunrise the backup's discharge is then added back into the hourly buckets, because the forecast subtracts that help explicitly — without this it is counted twice and sunrise SoC predicts high. Needs the backup charge power sensor",
           "backup_capacity": "Backup capacity (kWh)",
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
@@ -69,12 +70,30 @@
         "title": "Dump Load — Hourly Profile (kW)",
         "description": "Set the expected kW for each hour. Hours not running can be left at 0.",
         "data": {
-          "hour_0": "00:00", "hour_1": "01:00", "hour_2": "02:00", "hour_3": "03:00",
-          "hour_4": "04:00", "hour_5": "05:00", "hour_6": "06:00", "hour_7": "07:00",
-          "hour_8": "08:00", "hour_9": "09:00", "hour_10": "10:00", "hour_11": "11:00",
-          "hour_12": "12:00", "hour_13": "13:00", "hour_14": "14:00", "hour_15": "15:00",
-          "hour_16": "16:00", "hour_17": "17:00", "hour_18": "18:00", "hour_19": "19:00",
-          "hour_20": "20:00", "hour_21": "21:00", "hour_22": "22:00", "hour_23": "23:00"
+          "hour_0": "00:00",
+          "hour_1": "01:00",
+          "hour_2": "02:00",
+          "hour_3": "03:00",
+          "hour_4": "04:00",
+          "hour_5": "05:00",
+          "hour_6": "06:00",
+          "hour_7": "07:00",
+          "hour_8": "08:00",
+          "hour_9": "09:00",
+          "hour_10": "10:00",
+          "hour_11": "11:00",
+          "hour_12": "12:00",
+          "hour_13": "13:00",
+          "hour_14": "14:00",
+          "hour_15": "15:00",
+          "hour_16": "16:00",
+          "hour_17": "17:00",
+          "hour_18": "18:00",
+          "hour_19": "19:00",
+          "hour_20": "20:00",
+          "hour_21": "21:00",
+          "hour_22": "22:00",
+          "hour_23": "23:00"
         }
       },
       "dump_load_sensor": {
@@ -162,6 +181,7 @@
           "backup_discharge_entity": "Backup discharge power sensor (kW)",
           "backup_charge_power_entity": "Backup charge power sensor (optional; W or kW, positive = charging). Charging is excluded from house load",
           "ev_dc_charger_power_entity": "EV DC charger power sensor (optional, needs the backup charge power sensor; W or kW, positive = charging the car). While the car charges over DC and the backup battery discharges, that discharge is added back to house load — the main system never sees it. Vehicle-to-home charge into the backup is not excluded",
+          "house_load_net_of_backup": "House load sensor is the main inverter's output (optional). Tick when the sensor already EXCLUDES the backup battery's overnight help (e.g. an EG4 'output power' with a Sigen backup feeding the house). From the activation hour to sunrise the backup's discharge is then added back into the hourly buckets, because the forecast subtracts that help explicitly — without this it is counted twice and sunrise SoC predicts high. Needs the backup charge power sensor",
           "backup_capacity": "Backup capacity (kWh)",
           "backup_floor": "Minimum discharge floor (%)",
           "backup_discharge_kw": "Fixed discharge rate for forecast (kW)",
@@ -203,12 +223,30 @@
         "title": "Dump Load — Hourly Profile (kW)",
         "description": "Set the expected kW for each hour. Hours not running can be left at 0.",
         "data": {
-          "hour_0": "00:00", "hour_1": "01:00", "hour_2": "02:00", "hour_3": "03:00",
-          "hour_4": "04:00", "hour_5": "05:00", "hour_6": "06:00", "hour_7": "07:00",
-          "hour_8": "08:00", "hour_9": "09:00", "hour_10": "10:00", "hour_11": "11:00",
-          "hour_12": "12:00", "hour_13": "13:00", "hour_14": "14:00", "hour_15": "15:00",
-          "hour_16": "16:00", "hour_17": "17:00", "hour_18": "18:00", "hour_19": "19:00",
-          "hour_20": "20:00", "hour_21": "21:00", "hour_22": "22:00", "hour_23": "23:00"
+          "hour_0": "00:00",
+          "hour_1": "01:00",
+          "hour_2": "02:00",
+          "hour_3": "03:00",
+          "hour_4": "04:00",
+          "hour_5": "05:00",
+          "hour_6": "06:00",
+          "hour_7": "07:00",
+          "hour_8": "08:00",
+          "hour_9": "09:00",
+          "hour_10": "10:00",
+          "hour_11": "11:00",
+          "hour_12": "12:00",
+          "hour_13": "13:00",
+          "hour_14": "14:00",
+          "hour_15": "15:00",
+          "hour_16": "16:00",
+          "hour_17": "17:00",
+          "hour_18": "18:00",
+          "hour_19": "19:00",
+          "hour_20": "20:00",
+          "hour_21": "21:00",
+          "hour_22": "22:00",
+          "hour_23": "23:00"
         }
       },
       "dump_load_sensor": {
@@ -245,13 +283,15 @@
       },
       "forecast_options": {
         "title": "Forecast Options",
-        "description": "Set forecast range, target SoC, and fallback values.",
+        "description": "Set forecast range, target SoC, and fallback values. Load shedding: hours during which your automations are holding load back because of a low forecast are left out of the 7-day consumption profile (otherwise the forecast learns the reduced usage and turns optimistic). Set the threshold to the highest morning-low % your shedding automations react to, and/or list the flags they set.",
         "data": {
           "forecast_days": "Number of days to forecast (2-7)",
           "target_soc": "Target sunrise SoC (%)",
           "default_daily": "Fallback daily consumption (kWh)",
           "default_overnight": "Fallback overnight consumption (kWh)",
-          "guard_threshold": "Minimum kWh for averages to be valid"
+          "guard_threshold": "Minimum kWh for averages to be valid",
+          "shed_threshold_pct": "Load shedding: treat hours as shed while the Day-2 morning-low forecast is below (%) — 0 = off",
+          "shed_entities": "Load shedding: entities that are 'on' while load is being held back (optional)"
         }
       }
     }

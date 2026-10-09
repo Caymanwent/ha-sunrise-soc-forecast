@@ -20,6 +20,10 @@ from .const import (
     CONF_BACKUP_DISCHARGE_ENTITY,
     CONF_BACKUP_CHARGE_POWER_ENTITY,
     CONF_EV_DC_CHARGER_POWER_ENTITY,
+    CONF_HOUSE_LOAD_NET_OF_BACKUP,
+    CONF_SHED_THRESHOLD_PCT,
+    CONF_SHED_ENTITIES,
+    DEFAULT_SHED_THRESHOLD_PCT,
     CONF_BACKUP_CAPACITY,
     CONF_BACKUP_FLOOR,
     CONF_BACKUP_DISCHARGE_KW,
@@ -478,6 +482,7 @@ class SunriseSocForecastConfigFlow(
                     vol.Required(CONF_BACKUP_DISCHARGE_ENTITY): ENTITY_SELECTOR,
                     vol.Optional(CONF_BACKUP_CHARGE_POWER_ENTITY): ENTITY_SELECTOR,
                     vol.Optional(CONF_EV_DC_CHARGER_POWER_ENTITY): ENTITY_SELECTOR,
+                    vol.Optional(CONF_HOUSE_LOAD_NET_OF_BACKUP, default=False): bool,
                     vol.Required(
                         CONF_BACKUP_CAPACITY, default=DEFAULT_BACKUP_CAPACITY
                     ): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
@@ -796,6 +801,10 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
                         CONF_EV_DC_CHARGER_POWER_ENTITY,
                         description={"suggested_value": data.get(CONF_EV_DC_CHARGER_POWER_ENTITY)},
                     ): ENTITY_SELECTOR,
+                    vol.Optional(
+                        CONF_HOUSE_LOAD_NET_OF_BACKUP,
+                        default=bool(data.get(CONF_HOUSE_LOAD_NET_OF_BACKUP, False)),
+                    ): bool,
                     vol.Required(
                         CONF_BACKUP_CAPACITY,
                         default=data.get(CONF_BACKUP_CAPACITY, DEFAULT_BACKUP_CAPACITY),
@@ -1004,6 +1013,18 @@ class SunriseSocOptionsFlow(DumpLoadFlowMixin, config_entries.OptionsFlow):
                         CONF_GUARD_THRESHOLD,
                         default=data.get(CONF_GUARD_THRESHOLD, DEFAULT_GUARD_THRESHOLD),
                     ): vol.Coerce(float),
+                    vol.Optional(
+                        CONF_SHED_THRESHOLD_PCT,
+                        default=data.get(CONF_SHED_THRESHOLD_PCT, DEFAULT_SHED_THRESHOLD_PCT),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                    vol.Optional(
+                        CONF_SHED_ENTITIES,
+                        default=data.get(CONF_SHED_ENTITIES, []),
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=["input_boolean", "binary_sensor", "switch"], multiple=True
+                        )
+                    ),
                 }
             ),
         )

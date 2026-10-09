@@ -34,6 +34,10 @@ from .const import (
     CONF_BACKUP_DISCHARGE_ENTITY,
     CONF_BACKUP_CHARGE_POWER_ENTITY,
     CONF_EV_DC_CHARGER_POWER_ENTITY,
+    CONF_HOUSE_LOAD_NET_OF_BACKUP,
+    CONF_SHED_THRESHOLD_PCT,
+    CONF_SHED_ENTITIES,
+    DEFAULT_SHED_THRESHOLD_PCT,
     CONF_BACKUP_CAPACITY,
     CONF_BACKUP_FLOOR,
     CONF_BACKUP_DISCHARGE_KW,
@@ -144,6 +148,24 @@ def ev_to_backup_kw(backup_power_kw: float, ev_dc_power_kw: float) -> float:
     return min(charge, v2h)
 
 
+def in_backup_relief_window(hour: int, activation_hour: int, sunrise_hour: int) -> bool:
+    """True while the overnight simulation lets the backup assist the main.
+
+    Mirror of the calculator's ``_is_backup_active``: from the activation
+    hour up to (not including) the sunrise hour, wrapping through midnight.
+    Used to decide when backup discharge is added back into the buckets
+    for a house-load sensor that sits on the main inverter's output.
+    """
+    if activation_hour <= sunrise_hour:
+        return activation_hour <= hour < sunrise_hour
+    return hour >= activation_hour or hour < sunrise_hour
+
+
+def backup_relief_kw(backup_power_kw: float) -> float:
+    """Backup discharge (positive kW) — what the backup is covering right now."""
+    return max(0.0, -backup_power_kw)
+
+
 def net_house_load_kw(
     house_kw: float, backup_charge_kw: float, backup_to_ev: float = 0.0
 ) -> float:
@@ -159,9 +181,37 @@ def net_house_load_kw(
     ``backup_to_ev`` (see backup_to_ev_kw) is the one kind of backup
     discharge that IS house load: energy the main never saw because it went
     backup → DC charger → car. It is added so the buckets hold true home use.
+
+    With ``house_load_net_of_backup`` (sensor = main inverter output, so the
+    reading is already net of the backup's help) the caller passes the FULL
+    backup discharge in ``backup_to_ev`` during the relief window: the
+    simulation subtracts that help explicitly, so the buckets must hold the
+    load before it, or the relief is counted twice (optimistic sunrise SoC).
     """
     charge = max(0.0, backup_charge_kw)
     return max(0.0, house_kw - charge + max(0.0, backup_to_ev))
+
+
+def shedding_active(
+    morning_low_pct: float | None, threshold_pct: float, entity_states: list[str]
+) -> bool:
+    """True while the home is deliberately shedding load because of a low forecast.
+
+    Two independent signals, either is enough:
+      - the integration's own Day-2 morning-low forecast is below ``threshold_pct``
+        (the same number the owner's load-shedding automations key on; 0 disables),
+      - any configured shedding entity reports ``on`` (a hold flag, a "charging
+        paused" boolean … for shedding that outlives the forecast recovery).
+
+    Hours recorded while this is true would teach the 7-day profile a reduced
+    consumption and make later forecasts optimistic — the unsafe direction — so
+    the coordinator leaves those hours out of the profile (the bucket keeps its
+    previous, un-shed value). The cost is a pessimistic forecast while shedding
+    is active, which is the safe side.
+    """
+    if threshold_pct > 0 and morning_low_pct is not None and morning_low_pct < threshold_pct:
+        return True
+    return any(state == "on" for state in entity_states)
 
 
 # Cache TTL for astral calculations (seconds)
@@ -223,6 +273,15 @@ class SunriseSocCoordinator:
         # Diagnostics of the last house-load adjustment (kW), see accumulate_energy
         self.last_backup_charge_kw: float = 0.0
         self.last_backup_to_ev_kw: float = 0.0
+        self.last_backup_relief_kw: float = 0.0  # discharge added back (net-of-backup sensor, relief window only)
+        # Load shedding (see shedding_active): hours flagged here are not recorded into the profile
+        self.shed_threshold_pct: float = float(
+            config.get(CONF_SHED_THRESHOLD_PCT, DEFAULT_SHED_THRESHOLD_PCT) or 0.0
+        )
+        self.shed_entities: list[str] = list(config.get(CONF_SHED_ENTITIES, []) or [])
+        self._hour_shed: list[bool] = [False] * 24
+        self.shed_active: bool = False
+        self.shed_hours_skipped: int = 0
         self._last_grid_reading: float | None = None
         self._last_grid_time: datetime | None = None
         self._was_overnight: bool = False
@@ -323,6 +382,8 @@ class SunriseSocCoordinator:
         ev_entity = self.config.get(CONF_EV_DC_CHARGER_POWER_ENTITY, "")
         self.last_backup_charge_kw = 0.0
         self.last_backup_to_ev_kw = 0.0
+        self.last_backup_relief_kw = 0.0
+        overnight = self.is_overnight
         if self.backup.enabled and charge_entity:
             backup_kw = self.get_power_kw(charge_entity)  # + charging, − discharging
             self.last_backup_charge_kw = max(0.0, backup_kw)
@@ -332,10 +393,31 @@ class SunriseSocCoordinator:
                 # Charge fed by the car (V2H) was never main-side load: keep it
                 # in the reading instead of excluding it as main-fed charging.
                 self.last_backup_charge_kw -= ev_to_backup_kw(backup_kw, ev_kw)
-            power_kw = net_house_load_kw(
-                power_kw, self.last_backup_charge_kw, self.last_backup_to_ev_kw
-            )
-        overnight = self.is_overnight
+            add_back = self.last_backup_to_ev_kw
+            if self.config.get(CONF_HOUSE_LOAD_NET_OF_BACKUP, False) and overnight:
+                # House sensor = main inverter output: the backup's overnight help is
+                # already missing from the reading. Inside the window where the
+                # simulation subtracts that help explicitly, put it back so it is not
+                # counted twice. backup→EV is a subset of the discharge, so use max.
+                sunrise_dt, _sunset_dt = self._get_astral()
+                sunrise_hour = dt_util.as_local(sunrise_dt).hour if sunrise_dt else 6
+                if in_backup_relief_window(current_hour, self.backup.activation_hour, sunrise_hour):
+                    self.last_backup_relief_kw = backup_relief_kw(backup_kw)
+                    add_back = max(add_back, self.last_backup_relief_kw)
+            power_kw = net_house_load_kw(power_kw, self.last_backup_charge_kw, add_back)
+
+        # Load shedding: is the home deliberately holding load back right now?
+        day2 = self.results.get(2)
+        self.shed_active = shedding_active(
+            day2.morning_low_pct if day2 is not None else None,
+            self.shed_threshold_pct,
+            [
+                (st.state if (st := self.hass.states.get(eid)) is not None else "")
+                for eid in self.shed_entities
+            ],
+        )
+        if self.shed_active:
+            self._hour_shed[current_hour] = True  # any shedding inside the hour taints the whole hour
 
         # Initialize current hour on first call
         if self._current_hour is None:
@@ -344,11 +426,22 @@ class SunriseSocCoordinator:
         # Detect hour change — record the completed hour and save
         if current_hour != self._current_hour:
             prev_hour = self._current_hour
-            if self._hourly_energy_kwh[prev_hour] > 0:
+            if self._hour_shed[prev_hour]:
+                # Shed hour: keep the bucket's previous (un-shed) value, record nothing
+                self.shed_hours_skipped += 1
+                _LOGGER.info(
+                    "Hour %02d not recorded into the consumption profile: load shedding was active "
+                    "(%.2f kWh measured; %d shed hours skipped so far)",
+                    prev_hour,
+                    self._hourly_energy_kwh[prev_hour],
+                    self.shed_hours_skipped,
+                )
+            elif self._hourly_energy_kwh[prev_hour] > 0:
                 self._hourly_history[prev_hour].append(
                     round(self._hourly_energy_kwh[prev_hour], 3)
                 )
             self._hourly_energy_kwh[prev_hour] = 0.0
+            self._hour_shed[prev_hour] = False
             self._current_hour = current_hour
             self.hass.async_create_task(self.async_save())
 
@@ -823,8 +916,8 @@ class SunriseSocCoordinator:
         soc_dump_loads_future = self.get_soc_dump_loads(seed_live=False)
 
         # Get sunrise/sunset hours for hourly model
-        sunrise_local = sunrise.astimezone()
-        sunset_local = sunset.astimezone()
+        sunrise_local = dt_util.as_local(sunrise)  # HA's configured zone, same as the recorder's window
+        sunset_local = dt_util.as_local(sunset)
         sunrise_hour = sunrise_local.hour + sunrise_local.minute / 60
         sunset_hour = sunset_local.hour + sunset_local.minute / 60
 
@@ -1016,6 +1109,10 @@ class SunriseSocCoordinator:
                 "overnight_history": list(self._overnight_history),
                 "hourly_history": [list(h) for h in self._hourly_history],
                 "hourly_energy_kwh": self._hourly_energy_kwh,
+                "hour_shed": self._hour_shed,
+                # the flags only mean something for the hour that is current when the store is written
+                "hour_shed_at": dt_util.now().strftime("%Y-%m-%d %H"),
+                "shed_hours_skipped": self.shed_hours_skipped,
                 "daily_energy_kwh": self._daily_energy_kwh,
                 "overnight_energy_kwh": self._overnight_energy_kwh,
                 "grid_energy_today_kwh": self._grid_energy_today_kwh,
@@ -1053,6 +1150,19 @@ class SunriseSocCoordinator:
         self._daily_energy_kwh = data.get("daily_energy_kwh", 0.0)
         self._overnight_energy_kwh = data.get("overnight_energy_kwh", 0.0)
         self._grid_energy_today_kwh = data.get("grid_energy_today_kwh", 0.0)
+        # Shed flags: only the flag of the hour that was current when the store was written is still
+        # meaningful, and only if that hour is still the current one now (a restart spanning an hour
+        # boundary would otherwise leave a stale taint that drops a legitimate hour a day later).
+        saved_shed = data.get("hour_shed", [])
+        saved_at = data.get("hour_shed_at", "")
+        now_key = dt_util.now().strftime("%Y-%m-%d %H")
+        if isinstance(saved_shed, list) and len(saved_shed) == 24 and saved_at == now_key:
+            hour = int(now_key[-2:])
+            self._hour_shed = [False] * 24
+            self._hour_shed[hour] = bool(saved_shed[hour])
+        else:
+            self._hour_shed = [False] * 24
+        self.shed_hours_skipped = int(data.get("shed_hours_skipped", 0) or 0)
 
         # Restore hourly data
         saved_hourly = data.get("hourly_history", [])
