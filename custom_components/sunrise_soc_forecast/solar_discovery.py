@@ -7,6 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def discover_solar_entities(
     # Filter to sensor entities only
     sensor_entries = [e for e in entries if e.entity_id.startswith("sensor.")]
 
-    today = date.today()
+    today = dt_util.now().date()  # Home Assistant's zone, not the host's
     result: dict[str, str] = {}
     forecast_entities: list[tuple[str, date]] = []  # (entity_id, forecast_date)
 
