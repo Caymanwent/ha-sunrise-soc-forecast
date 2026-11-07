@@ -92,6 +92,124 @@ class DayResult:
     morning_low_pct: float = 0.0
     floor_hour: str | None = None
     night_floor_hour: str | None = None
+    # Full-battery prediction (3.4.0). The *_time floats are hours since the midnight
+    # that the day's simulation counts from (monotonic through the midnight wrap, so a
+    # value past 24 is the next calendar day); the *_hour strings are HH:MM (mod 24).
+    # both_* is the later of main and backup, or just main when no backup is configured.
+    main_full: bool = False
+    backup_full: bool = False
+    main_full_hour: str | None = None
+    backup_full_hour: str | None = None
+    both_full_hour: str | None = None
+    main_full_time: float | None = None
+    backup_full_time: float | None = None
+    both_full_time: float | None = None
+
+
+# Tolerance (kWh) for "battery is at capacity" comparisons on simulated floats
+_FULL_EPS = 1e-6
+
+
+def format_hhmm(hours: float | None) -> str | None:
+    """HH:MM for an hours-since-midnight float, wrapped mod 24, to the nearest minute."""
+    if hours is None:
+        return None
+    total_minutes = int(round(hours * 60)) % (24 * 60)
+    h, m = divmod(total_minutes, 60)
+    return f"{h:02d}:{m:02d}"
+
+
+def _main_full_in_step(
+    step_start: float,
+    frac: float,
+    before: float,
+    net: float,
+    cap: float,
+    engaging: list[tuple[float, float]],
+) -> float | None:
+    """Hours float at which the main reaches ``cap`` inside a step, or None.
+
+    The battery rises linearly from ``before`` by ``net`` over the step (``frac``
+    hours). ``engaging`` lists SoC-gated dump loads that were OFF at the step start
+    but whose engage level lies inside the step, as (engage_kwh, draw_kwh_per_hour):
+    the simulation only switches those loads at step boundaries, so its energy
+    accounting lets the battery run past them to the cap one step early. For the
+    reported time the climb is re-traced piecewise, taking each load's draw off the
+    rate from its engage level on. Returns None when a load would hold the battery
+    below the cap — then the step's clip is a step-size artifact, not a full
+    battery (a load that physically holds the main at 96-99 % all afternoon).
+    Clamped to the step.
+    """
+    if before >= cap:
+        return step_start
+    if frac <= 0 or net <= 0:
+        return None
+    rate = net / frac
+    level = before
+    t = 0.0
+    for engage_kwh, draw in sorted(engaging):
+        if rate <= 0:
+            return None
+        t += (engage_kwh - level) / rate
+        level = engage_kwh
+        rate -= draw
+    if rate <= 0:
+        return None
+    t += (cap - level) / rate
+    return step_start + min(frac, max(0.0, t))
+
+
+def _both_full_time(
+    main_time: float | None, backup_time: float | None, backup_enabled: bool
+) -> float | None:
+    """The later of the two full times; the main's alone when no backup is configured."""
+    if not backup_enabled:
+        return main_time
+    if main_time is not None and backup_time is not None:
+        return max(main_time, backup_time)
+    return None
+
+
+def latch_full_times(
+    result: DayResult,
+    current_hour: float,
+    main_since: float | None,
+    backup_since: float | None,
+    backup_enabled: bool,
+) -> tuple[float | None, float | None]:
+    """Pin a Day-1 result's full times to when each battery was FIRST seen full.
+
+    predict_day1_daytime seeds a battery that is already full at the start with
+    ``*_full_time == current_hour`` ("full as of now"), so once the batteries really
+    are full every recalculation would move the reported time forward minute by
+    minute. The coordinator keeps a latch per battery and passes it in here as
+    hours on the same midnight as ``result`` (None = not latched): a latch is kept
+    while the result still says "full now", set to ``current_hour`` the first time
+    it does, and cleared when it does not (the live battery is below full — the
+    time is then a prediction again). The result's main/backup/both fields are
+    rewritten to the latched moments; the new latches are returned.
+    """
+
+    def _latch(full_time: float | None, since: float | None) -> float | None:
+        if full_time is None or full_time > current_hour + _FULL_EPS:
+            return None
+        return since if since is not None else full_time
+
+    main_since = _latch(result.main_full_time, main_since)
+    backup_since = _latch(result.backup_full_time, backup_since) if backup_enabled else None
+
+    if main_since is not None:
+        result.main_full_time = main_since
+        result.main_full_hour = format_hhmm(main_since)
+    if backup_since is not None:
+        result.backup_full_time = backup_since
+        result.backup_full_hour = format_hhmm(backup_since)
+    if main_since is not None or backup_since is not None:
+        result.both_full_time = _both_full_time(
+            result.main_full_time, result.backup_full_time, backup_enabled
+        )
+        result.both_full_hour = format_hhmm(result.both_full_time)
+    return main_since, backup_since
 
 
 @dataclass
@@ -597,6 +715,9 @@ def predict_day1_daytime(
     dump_load_profile carries loads gated per-hour on solar covering the base
     consumption. soc_dump_loads carries loads gated by the simulated battery
     SoC crossing their engage/revert thresholds (daylight only).
+
+    Also records when the main first reaches capacity and when the backup
+    (charged only from the main's surplus) first fills — see DayResult.
     """
 
     eff = inverter_efficiency if inverter_efficiency > 0 else 1.0
@@ -694,6 +815,18 @@ def predict_day1_daytime(
     total_consumption = 0.0
     total_solar = 0.0
 
+    # Full-battery tracking: the first time the main reaches capacity and the
+    # backup reaches its usable capacity (charged from the main's surplus), as
+    # hours since this simulation day's midnight. Recorded only on solar steps;
+    # a battery that is already full at the start is "full at the start time".
+    main_full_time: float | None = None
+    backup_full_time: float | None = None
+    backup_tracked = backup.enabled and backup.usable_kwh > 0
+    if current_kwh >= main.capacity_kwh - _FULL_EPS:
+        main_full_time = current_hour
+    if backup_tracked and br >= backup.usable_kwh - _FULL_EPS:
+        backup_full_time = current_hour
+
     for i in range(total_steps):
         idx = (start_idx + i) % array_len
         hour = (idx // steps_per_hour) % 24
@@ -712,6 +845,11 @@ def predict_day1_daytime(
 
         if frac <= 0:
             continue
+
+        # Wall-clock span of this step (hours since the start day's midnight, not
+        # wrapped, so it keeps rising through midnight): the first step begins
+        # at the current time, later ones on their array boundary.
+        step_start = current_hour if i == 0 else (start_idx + i) * step_hours
 
         # Solar (already 0 for nighttime indices)
         solar_val = solar_array[idx] if idx < len(solar_array) else 0.0
@@ -739,6 +877,7 @@ def predict_day1_daytime(
         # base that hour; SoC-gated loads run only while their simulated
         # state machine is on. Removal caps keep the simulated hour from
         # ever exceeding the recorded bucket.
+        soc_load_draw = [0.0] * len(soc_loads)  # kWh/h each SoC load adds this hour when on
         if hourly_consumption and len(hourly_consumption) == 24:
             remainder = hourly_consumption[hour]
             removed_solar_gated = 0.0
@@ -750,6 +889,7 @@ def predict_day1_daytime(
                 if ld.profile[hour] > 0:
                     removed = min(ld.profile[hour], remainder)
                     remainder -= removed
+                    soc_load_draw[k] = removed
                     if soc_load_active[k]:
                         soc_dump_hour += removed
             base = remainder
@@ -771,14 +911,54 @@ def predict_day1_daytime(
         if solar_val > 0 and hourly_consumption:
             total_consumption += hourly_consumption[hour] * frac
 
-        battery += solar_scaled - cons_dc
+        battery_before = battery
+        net = solar_scaled - cons_dc
+        battery += net
+        if (
+            main_full_time is None
+            and solar_val > 0
+            and battery >= main.capacity_kwh - _FULL_EPS
+        ):
+            # Interpolate the crossing inside the step from the step's net gain.
+            # SoC-gated loads that are off now but whose engage level lies inside
+            # this step are taken into account for the reported time only (the
+            # energy accounting above switches them at the next step boundary);
+            # a load engaging at 100 % cannot keep the battery from getting there.
+            engaging = [
+                (ld.engage_soc / 100 * main.capacity_kwh, soc_load_draw[k] / eff)
+                for k, ld in enumerate(soc_loads)
+                if not soc_load_active[k]
+                and battery_before < ld.engage_soc / 100 * main.capacity_kwh <= battery
+                and ld.engage_soc / 100 * main.capacity_kwh < main.capacity_kwh - _FULL_EPS
+            ]
+            main_full_time = _main_full_in_step(
+                step_start, frac, battery_before, net, main.capacity_kwh, engaging
+            )
         if battery > main.capacity_kwh:
             clip = battery - main.capacity_kwh
             surplus += clip
             # Charge backup from surplus in real-time
             if backup.enabled and br < backup.usable_kwh:
-                charge = min(clip * backup_charge_efficiency, backup.usable_kwh - br)
+                available = clip * backup_charge_efficiency
+                needed = backup.usable_kwh - br
+                charge = min(available, needed)
                 br += charge
+                if (
+                    backup_full_time is None
+                    and backup_tracked
+                    and solar_val > 0
+                    and main_full_time is not None
+                    and available >= needed - _FULL_EPS
+                ):
+                    # Surplus only accrues once the main is full: the part of the
+                    # step that went into the main first (none when it was full
+                    # before this step), then the share of the step's surplus the
+                    # backup still needed.
+                    main_frac = min(1.0, max(0.0, (main_full_time - step_start) / frac))
+                    charge_frac = min(1.0, needed / available) if available > 0 else 1.0
+                    backup_full_time = step_start + frac * (
+                        main_frac + (1.0 - main_frac) * charge_frac
+                    )
             battery = main.capacity_kwh
         if battery < main.floor_kwh:
             battery = main.floor_kwh
@@ -807,6 +987,13 @@ def predict_day1_daytime(
     # Backup charge for Days 2-7 grid_needed reference
     backup_charged = min(backup.usable_kwh, backup_current + surplus * backup_charge_efficiency) if backup.enabled else 0.0
 
+    # Both full = the later of the two; with no backup configured, the main alone
+    if not backup.enabled:
+        backup_full_time = None
+    main_full = main_full_time is not None
+    backup_full = backup_full_time is not None
+    both_full_time = _both_full_time(main_full_time, backup_full_time, backup.enabled)
+
     return DayResult(
         soc_percent=round(sunrise_kwh / main.capacity_kwh * 100, 1),
         predicted_kwh=round(sunrise_kwh, 2),
@@ -816,6 +1003,14 @@ def predict_day1_daytime(
         morning_low_kwh=round(day_low, 2),
         morning_low_pct=round(day_low / main.capacity_kwh * 100, 1),
         floor_hour=floor_hour_str,
+        main_full=main_full,
+        backup_full=backup_full,
+        main_full_hour=format_hhmm(main_full_time),
+        backup_full_hour=format_hhmm(backup_full_time),
+        both_full_hour=format_hhmm(both_full_time),
+        main_full_time=main_full_time,
+        backup_full_time=backup_full_time,
+        both_full_time=both_full_time,
     )
 
 

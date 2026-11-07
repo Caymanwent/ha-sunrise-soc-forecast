@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -21,6 +21,7 @@ from .calculator import (
     SocDumpLoad,
     get_consumption,
     get_overnight_params,
+    latch_full_times,
     predict_day1_daytime,
     predict_future_day,
 )
@@ -300,6 +301,15 @@ class SunriseSocCoordinator:
 
         # Current results
         self.results: dict[int, DayResult] = {}
+        # Calendar anchor of the current results (set by update(), see day_start):
+        # the local date Day 1's hour-floats count from, and whether the results
+        # were computed after midnight but before sunrise (Day 2 = today then).
+        self._results_day0: date | None = None
+        self._results_post_midnight: bool = False
+        # Live full-battery latch (see _latch_live_full): the moment each battery
+        # was first seen full by the live SoC, None while it is not full.
+        self._main_full_since: datetime | None = None
+        self._backup_full_since: datetime | None = None
 
         # Callback set with unregister support (fix #3)
         self._update_callbacks: set = set()
@@ -960,6 +970,11 @@ class SunriseSocCoordinator:
         if self.backup.enabled:
             backup_soc = self.get_state_float(self.config.get(CONF_BACKUP_SOC_ENTITY, ""))
 
+        # Anchor the results on the calendar (only once we are really recomputing;
+        # the early returns above keep the previous results AND their anchor).
+        self._results_day0 = now.date()
+        self._results_post_midnight = overnight and now.hour < 12
+
         self.results[1] = predict_day1_daytime(
             current_kwh=main_kwh,
             remaining_solar=remaining_solar,
@@ -981,6 +996,7 @@ class SunriseSocCoordinator:
             dump_load_profile=dump_load_profile,
             soc_dump_loads=soc_dump_loads_day1,
         )
+        self._latch_live_full(current_hour_frac)
 
         # Days 2-N — always calculate live, only Solcast freezes post-midnight.
         # Pre-midnight (incl. evening overnight) reads live: entities are still
@@ -1052,6 +1068,67 @@ class SunriseSocCoordinator:
             if hourly:
                 self._frozen_solcast_hourly[day] = hourly
         _LOGGER.debug("Frozen solar forecast captured for days 2-%d", self.num_days)
+
+    def day_start(self, day: int) -> datetime | None:
+        """Local midnight that Day ``day``'s hour-floats (floor/full times) count from.
+
+        Day 1 always simulates from *now*, so its hours count from today's
+        midnight (a value past 24 is simply tomorrow). Days 2..N each simulate
+        one sunrise-to-sunrise day, hours counted from that day's own midnight:
+
+        - daytime (sunrise..sunset): Day 2 is tomorrow → today + (day - 1)
+        - evening (sunset..midnight): Day 1 is tonight, Day 2 tomorrow → today + (day - 1)
+        - after midnight, before sunrise: Day 1 is the rest of tonight and Day 2 is
+          TODAY's daylight (update() feeds it the solar frozen at 23:55 for what was
+          then "tomorrow", mirroring SOLCAST_SHIFTED) → today + (day - 2)
+
+        None until update() has produced results.
+        """
+        if self._results_day0 is None:
+            return None
+        offset = day - 1
+        if self._results_post_midnight and day >= 2:
+            offset -= 1
+        return dt_util.start_of_local_day(self._results_day0) + timedelta(days=offset)
+
+    def full_datetime(self, day: int, hours: float | None) -> datetime | None:
+        """Turn a DayResult hour-float for Day ``day`` into an aware local datetime.
+
+        Rounded to the minute, like the HH:MM attributes it sits next to.
+        """
+        start = self.day_start(day)
+        if start is None or hours is None:
+            return None
+        return start + timedelta(minutes=round(hours * 60))
+
+    def _latch_live_full(self, current_hour: float) -> None:
+        """Keep Day 1's full times at the moment each battery was first seen full.
+
+        While the live SoC reads full, predict_day1_daytime reports "full as of
+        now" on every recalculation (one per house-power reading, so the
+        timestamp sensor would otherwise creep forward minute by minute for the
+        whole afternoon). The latch turns that into the real time the battery got
+        there, kept until the live state drops below full again. Not persisted:
+        after a restart it starts at the first update that finds the battery full.
+        """
+        day0 = self.day_start(1)
+        result = self.results.get(1)
+        if day0 is None or result is None:
+            return
+
+        def _hours(moment: datetime | None) -> float | None:
+            # Wall-clock hours since Day 1's midnight (negative = yesterday)
+            return None if moment is None else (moment - day0).total_seconds() / 3600
+
+        main_since, backup_since = latch_full_times(
+            result,
+            current_hour,
+            _hours(self._main_full_since),
+            _hours(self._backup_full_since),
+            self.backup.enabled,
+        )
+        self._main_full_since = self.full_datetime(1, main_since)
+        self._backup_full_since = self.full_datetime(1, backup_since)
 
     def register_callback(self, callback_fn) -> None:
         """Register an update callback."""

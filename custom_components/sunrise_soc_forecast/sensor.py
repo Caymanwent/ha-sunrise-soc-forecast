@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, CONF_FORECAST_DAYS, DEFAULT_FORECAST_DAYS
 
@@ -37,6 +40,9 @@ async def async_setup_entry(
     # Consumption average sensors
     entities.append(ConsumptionAverageSensor(coordinator, "daily", entry))
     entities.append(ConsumptionAverageSensor(coordinator, "overnight", entry))
+
+    # Next predicted moment both batteries are full
+    entities.append(BatteriesFullSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -118,7 +124,105 @@ class SunriseSocSensor(SensorEntity):
             if result.night_floor_hour:
                 attrs["night_floor_hour"] = result.night_floor_hour
 
+        # Full-battery prediction: booleans always, HH:MM only when predicted
+        attrs["main_full"] = result.main_full
+        attrs["backup_full"] = result.backup_full
+        if result.main_full_hour is not None:
+            attrs["main_full_hour"] = result.main_full_hour
+        if result.backup_full_hour is not None:
+            attrs["backup_full_hour"] = result.backup_full_hour
+        if result.both_full_hour is not None:
+            attrs["both_full_hour"] = result.both_full_hour
+
         return attrs
+
+
+class BatteriesFullSensor(SensorEntity):
+    """Next predicted moment at which both the main and the backup battery are full.
+
+    Searches Day 1..N in order: Day 1 simulates from now, so if it predicts no
+    full charge today (cloudy, or it is already evening) the state falls through
+    to Day 2 = tomorrow, and so on. Unknown when no forecast day gets there.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:battery-charging-100"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        """Initialize."""
+        self._coordinator = coordinator
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_batteries_full"
+        self._attr_name = "Predicted Batteries Full"
+
+    async def async_added_to_hass(self) -> None:
+        """Register update callback."""
+        self._coordinator.register_callback(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister update callback."""
+        self._coordinator.unregister_callback(self._handle_update)
+
+    @callback
+    def _handle_update(self) -> None:
+        """Handle coordinator update."""
+        self.async_write_ha_state()
+
+    def _next_full(self) -> tuple[int, Any, datetime] | None:
+        """First forecast day (1..N) that predicts both batteries full → (day, result, when)."""
+        for day in range(1, self._coordinator.num_days + 1):
+            result = self._coordinator.results.get(day)
+            if result is None or result.both_full_time is None:
+                continue
+            when = self._coordinator.full_datetime(day, result.both_full_time)
+            if when is not None:
+                return day, result, when
+        return None
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the next predicted both-full datetime."""
+        found = self._next_full()
+        return found[2] if found else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return which day it is, the per-battery times and a readable summary."""
+        found = self._next_full()
+        if found is None:
+            return {
+                "detail": (
+                    f"No day in the {self._coordinator.num_days}-day forecast "
+                    "predicts both batteries full"
+                ),
+            }
+        day, result, when = found
+        coordinator = self._coordinator
+        day_date = coordinator.day_start(day).date().isoformat()
+        main_at = coordinator.full_datetime(day, result.main_full_time)
+        backup_at = coordinator.full_datetime(day, result.backup_full_time)
+        if coordinator.backup.enabled:
+            detail = (
+                f"Day {day} ({day_date}): main full {result.main_full_hour}, "
+                f"backup full {result.backup_full_hour}"
+            )
+        else:
+            detail = (
+                f"Day {day} ({day_date}): main full {result.main_full_hour} "
+                "(no backup battery configured)"
+            )
+        if when <= dt_util.now():
+            # Day 1 with the live batteries full: the coordinator latches the
+            # moment they got there, so the state is in the past, not creeping
+            detail += " — full now"
+        return {
+            "day": day,
+            "date": day_date,
+            "main_full_at": main_at.isoformat() if main_at else None,
+            "backup_full_at": backup_at.isoformat() if backup_at else None,
+            "detail": detail,
+        }
 
 
 class ConsumptionAverageSensor(SensorEntity):

@@ -157,6 +157,7 @@ After setup, the integration creates these sensors:
 | `sensor.predicted_sunrise_soc_day_2` through `day_7` | Days 2-7 predictions |
 | `sensor.7_day_average_daily_consumption` | Rolling 7-day daily consumption average (kWh) |
 | `sensor.7_day_average_overnight_consumption` | Rolling 7-day overnight consumption average (kWh) |
+| `sensor.predicted_batteries_full` | Next predicted moment both the main and the backup battery are full (timestamp). Day 1 is simulated from now, so if today will not get there (cloudy, or it is already evening) it falls through to the first later day that does; `unknown` when no day in the forecast does. Attributes: `day`, `date`, `main_full_at`, `backup_full_at`, `detail`. Once both batteries really are full it holds the time they got there until the main drops below full again |
 
 ### Sensor Attributes (All Days)
 
@@ -171,6 +172,13 @@ After setup, the integration creates these sensors:
 | `target_soc` | Configured target SoC (%) |
 | `morning_low_kwh` | Predicted lowest battery level before solar ramps up (kWh) — Days 2-7 |
 | `morning_low_pct` | Same as percentage — Days 2-7 |
+| `main_full` | Whether the main battery is predicted to reach 100 % during that day's daylight |
+| `main_full_hour` | Predicted time it gets there (HH:MM, local) — only present when `main_full` is true. On Day 1 a battery that is already full shows the time it was first seen full |
+| `backup_full` | Whether the backup battery (charged only from the main's surplus) is predicted to fill — always `false` without a backup battery |
+| `backup_full_hour` | Predicted time the backup fills (HH:MM) — only when `backup_full` is true |
+| `both_full_hour` | The later of the two (just `main_full_hour` without a backup battery) — only when both are predicted full |
+
+The full times are read off the same simulation as the SoC prediction, interpolated inside the step they fall in. A SoC-gated dump load (engage/revert thresholds) that draws more than the surplus holds the battery just under its engage level instead of letting it fill — such a day reports `main_full: false` even though the simulation's coarse steps briefly touch 100 %.
 
 ### Consumption Average Attributes
 
