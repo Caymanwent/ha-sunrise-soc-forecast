@@ -1260,7 +1260,7 @@ class SunriseSocCoordinator:
         frozen_hourly = data.get("frozen_solcast_hourly", {})
         for k, v in frozen_hourly.items():
             try:
-                if isinstance(v, list) and len(v) in (24, 48):
+                if isinstance(v, list) and len(v) in (24, 48, 96):
                     self._frozen_solcast_hourly[int(k)] = [float(x) for x in v]
             except (TypeError, ValueError):
                 pass
