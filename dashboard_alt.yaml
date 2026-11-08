@@ -1,27 +1,28 @@
+# Alternative forecast card — "Day N" labels instead of dates, a Grid Need column, and a `suffix` for a second
+# instance of the integration (set it to '_2' if your entities end in _2). Same attributes as dashboard.yaml.
 type: markdown
 content: |
-  {% set days = [1,2,3,4,5,6,7] -%}
-  {% set suffix = '_2' -%}
-  {% set day1 = 'sensor.predicted_sunrise_soc_day_1' ~ suffix -%}
-  {% set avg_daily = 'sensor.7_day_average_daily_consumption' ~ suffix -%}
-  {% set avg_overnight = 'sensor.7_day_average_overnight_consumption' ~ suffix -%}
-  | Day | Status | SoC % | kWh | AM Low | Solcast | Daytime | Backup | Grid Need |
-  |-----|--------|-------|-----|--------|---------|---------|--------|-----------|
-  {%- for d in days %}
-  {%- set entity = 'sensor.predicted_sunrise_soc_day_' ~ d ~ suffix %}
-  {%- set soc = states(entity) | float(0) %}
-  {%- if soc > 0 %}
-  | {% if d == 1 %}{% if is_state('binary_sensor.is_overnight', 'on') and now().hour < 12 %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(entity, 'predicted_kwh') }} | {% if d < 7 %}{{ state_attr('sensor.predicted_sunrise_soc_day_' ~ (d+1) ~ suffix, 'morning_low_pct') }}%{% else %}—{% endif %} | {% if d == 1 %}{{ state_attr(entity, 'remaining_solar_kwh') }}{% else %}{{ state_attr(entity, 'solcast_kwh') }}{% endif %} | {{ state_attr(entity, 'daytime_consumption_kwh') }} | {{ state_attr(entity, 'backup_charged_kwh') }} | {{ state_attr(entity, 'grid_needed_kwh') }} |
+  {% set suffix = '' -%}
+  {% set d1 = 'sensor.predicted_sunrise_soc_day_1' ~ suffix -%}
+  {% set pre_sunrise = state_attr(d1, 'mode') == 'nighttime' and now().hour < 12 -%}
+  | Day | Status | SoC % | kWh | Day Low | Solar | Daytime | Backup | Main Full | Backup Full | Grid Need |
+  |-----|--------|-------|-----|---------|-------|---------|--------|-----------|-------------|-----------|
+  {%- for d in range(1, 8) %}
+  {%- set e = 'sensor.predicted_sunrise_soc_day_' ~ d ~ suffix %}
+  {%- if has_value(e) %}
+  {%- set soc = states(e) | float(0) %}
+  {%- set next_e = 'sensor.predicted_sunrise_soc_day_' ~ (d + 1) ~ suffix if d < 7 else '' %}
+  | {% if d == 1 %}{% if pre_sunrise %}This Morning{% else %}Tomorrow{% endif %}{% else %}Day {{ d }}{% endif %} | {% if soc < 5 %}🔴{% elif soc < 15 %}🟡{% else %}🟢{% endif %} | {{ soc }}% | {{ state_attr(e, 'predicted_kwh') }} | {% if next_e and has_value(next_e) %}{{ state_attr(next_e, 'morning_low_pct') }}%{% else %}—{% endif %} | {% if d == 1 %}{{ state_attr(e, 'remaining_solar_kwh') }}{% else %}{{ state_attr(e, 'solcast_kwh') }}{% endif %} | {{ state_attr(e, 'daytime_consumption_kwh') }} | {{ state_attr(e, 'backup_charged_kwh') }} | {{ state_attr(e, 'main_full_hour') or '—' }} | {{ state_attr(e, 'backup_full_hour') or '—' }} | {{ state_attr(e, 'grid_needed_kwh') }} |
   {%- endif %}
   {%- endfor %}
 
-  {% if is_state('binary_sensor.is_overnight', 'off') -%}
-  Mode: Daytime | Remaining solar: {{ state_attr(day1, 'remaining_solar_kwh') }} kWh | Hours to sunset: {{ ((as_datetime(state_attr('sun.sun', 'next_setting')) - now()).total_seconds() / 3600) | round(1) }}h
+  {% set full = 'sensor.predicted_batteries_full' ~ suffix -%}
+  {% if state_attr(d1, 'mode') == 'daytime' -%}
+  Mode: ☀️ Daytime | Remaining solar: {{ state_attr(d1, 'remaining_solar_kwh') }} kWh | Hours to sunset: {{ ((as_datetime(state_attr('sun.sun', 'next_setting')) - now()).total_seconds() / 3600) | round(1) }}h{% if has_value(full) %} | Both full: {{ (states(full) | as_datetime | as_local).strftime('%a %H:%M') }}{% endif %}
   {%- else -%}
-  Phase 1 (now→2am): {{ state_attr(day1, 'hours_phase1') }}h @ {{ state_attr(day1, 'avg_overnight_kw') }} kW avg | live: {{ state_attr(day1, 'live_kw') }} kW
-  Phase 2 (2am→sunrise): {{ state_attr(day1, 'hours_phase2') }}h | Backup: {{ state_attr(day1, 'sigen_available_kwh') }} kWh @ {{ state_attr(day1, 'sigen_kw') }} kW
+  Mode: 🌙 Nighttime | Backup: {{ state_attr(d1, 'backup_charged_kwh') }} kWh{% if has_value(full) %} | Next both full: {{ (states(full) | as_datetime | as_local).strftime('%a %H:%M') }}{% endif %}
   {%- endif %}
-  {% if state_attr(day1, 'grid_needed_kwh') | float(0) > 0 -%}
-  Grid needed: {{ state_attr(day1, 'grid_needed_kwh') }} kWh to target ({{ state_attr(day1, 'target_soc') }}%) | Used today: {{ state_attr(day1, 'grid_used_today_kwh') }} kWh
+  {% if state_attr(d1, 'grid_needed_kwh') | float(0) > 0 -%}
+  Grid needed: {{ state_attr(d1, 'grid_needed_kwh') }} kWh to target ({{ state_attr(d1, 'target_soc') }}%) | Used today: {{ state_attr(d1, 'grid_used_today_kwh') }} kWh
   {%- endif %}
-  *{% if state_attr(day1, 'using_fallback') %}Using estimated consumption (fallback values){% else %}Using 7-day averages (daily: {{ states(avg_daily) | round(1) }} kWh / overnight: {{ states(avg_overnight) | round(1) }} kWh){% endif %}*
+  *{% if state_attr(d1, 'using_fallback') %}⚠️ Using estimated consumption (fallback values){% else %}✅ Using 7-day averages (daily: {{ states('sensor.7_day_average_daily_consumption' ~ suffix) | float(0) | round(1) }} kWh / overnight: {{ states('sensor.7_day_average_overnight_consumption' ~ suffix) | float(0) | round(1) }} kWh){% endif %}*

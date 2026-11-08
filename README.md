@@ -239,7 +239,7 @@ Pick your solar forecast integration from the list — every installed Solcast a
 
 The prefix follows the name your Solcast entry was given — the default "Solcast PV Forecast" gives `sensor.solcast_pv_forecast_forecast_today`, an entry renamed "Solcast PV BC" gives `sensor.solcast_pv_bc_forecast_today`, and so on. Discovery does not care about the ids — they need not even share a prefix (a renamed `…_bc_forecast_today` alongside the default `…_forecast_forecast_day_3` works) — and the manual form takes whatever yours are.
 
-**Forecast today** is the entity whose attributes carry today's curve (`detailedForecast` for Solcast, `watts` for Open-Meteo). Without it Day 1 spreads the remaining-today total over a full sunrise-to-sunset sine curve and only counts the part after the current time, so later in the day it under-counts the solar still to come and the prediction errs low. The per-day entities carry their own curves for Days 2-7.
+**Forecast today** is the entity whose attributes carry today's curve (`detailedForecast` for Solcast, `watts` for Open-Meteo). Without it Day 1 spreads the remaining-today total over the rest of the day in a sine shape — the part of the day's bell curve from now to sunset — so the total still matches the forecast; the real curve is better at placing it within the day. The per-day entities carry their own curves for Days 2-7.
 
 ### Step 5: Forecast Options
 

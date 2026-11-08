@@ -752,21 +752,37 @@ def predict_day1_daytime(
     if total_steps <= 0:
         total_steps = 0
 
-    # Build solar values for sine fallback (full 24h, 0 outside solar window)
+    # Build solar values for sine fallback (full 24h, 0 outside solar window).
+    # remaining_solar is what is still to come from current_hour onwards, so it is
+    # spread over the part of the day's sine curve the loop will actually consume:
+    # hours before current_hour get nothing, and the current hour's weight is scaled
+    # by the fraction of it that is left (the loop pro-rates that first step the
+    # same way), so the consumed total equals remaining_solar. Before sunrise (or
+    # for Days 2-7, which start at sunrise) that is simply the whole curve.
     if not hourly_solar:
         sr_int = int(math.floor(sunrise_hour))
         ss_int = int(math.ceil(sunset_hour))
         full_day_steps = max(1, ss_int - sr_int)
 
+        start_h = sr_int
+        first_weight = 1.0
+        if current_hour > sr_int:
+            start_h = int(math.floor(current_hour))
+            first_weight = 1.0 - (current_hour - start_h)
+
         sine_solar = [0.0] * 24
         solar_factors = []
         for h in range(sr_int, ss_int):
+            if h < start_h:
+                continue
             t = (h - sr_int + 0.5) / full_day_steps
-            solar_factors.append((h % 24, max(0, math.sin(t * math.pi))))
-        factor_sum = sum(f for _, f in solar_factors)
+            solar_factors.append((h, max(0, math.sin(t * math.pi))))
+        factor_sum = sum(
+            f * (first_weight if h == start_h else 1.0) for h, f in solar_factors
+        )
         if factor_sum > 0 and remaining_solar > 0:
             for h, f in solar_factors:
-                sine_solar[h] = (f / factor_sum) * remaining_solar
+                sine_solar[h % 24] = (f / factor_sum) * remaining_solar
         solar_array = sine_solar
     else:
         solar_array = hourly_solar
@@ -851,8 +867,12 @@ def predict_day1_daytime(
         # at the current time, later ones on their array boundary.
         step_start = current_hour if i == 0 else (start_idx + i) * step_hours
 
-        # Solar (already 0 for nighttime indices)
+        # Solar (already 0 for nighttime indices). The final step ends at the next
+        # sunrise, i.e. it lies before sunrise, so it carries no solar even though
+        # its array slot is this morning's sunrise slot (the loop wraps a full day).
         solar_val = solar_array[idx] if idx < len(solar_array) else 0.0
+        if i == total_steps - 1:
+            solar_val = 0.0
         solar_scaled = solar_val * (frac / step_hours) if step_hours > 0 else 0.0
 
         # Update SoC-gated dump-load state machines — hysteresis on the
