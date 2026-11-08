@@ -757,8 +757,10 @@ def predict_day1_daytime(
     # spread over the part of the day's sine curve the loop will actually consume:
     # hours before current_hour get nothing, and the current hour's weight is scaled
     # by the fraction of it that is left (the loop pro-rates that first step the
-    # same way), so the consumed total equals remaining_solar. Before sunrise (or
-    # for Days 2-7, which start at sunrise) that is simply the whole curve.
+    # same way), so the consumed total equals remaining_solar. Before sunrise that
+    # is the whole curve; for Days 2-7 (which start at sunrise) only the sunrise
+    # hour is down-weighted by the fraction of it after sunrise, matching the
+    # loop's pro-rated first step.
     if not hourly_solar:
         sr_int = int(math.floor(sunrise_hour))
         ss_int = int(math.ceil(sunset_hour))
@@ -782,7 +784,7 @@ def predict_day1_daytime(
         )
         if factor_sum > 0 and remaining_solar > 0:
             for h, f in solar_factors:
-                sine_solar[h % 24] = (f / factor_sum) * remaining_solar
+                sine_solar[h] = (f / factor_sum) * remaining_solar
         solar_array = sine_solar
     else:
         solar_array = hourly_solar
