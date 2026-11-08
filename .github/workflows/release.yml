@@ -1,0 +1,42 @@
+name: Release asset
+
+# On every published release (pre-releases included): check the manifest version matches the tag, zip the integration
+# folder's CONTENTS (manifest.json at the zip root — the layout `zip_release: true` in hacs.json promises) and attach it
+# as sunrise_soc_forecast.zip. The Marketplace / HACS then install from the asset and count its downloads.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  asset:
+    name: Build and attach sunrise_soc_forecast.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Check the manifest version matches the tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          TAG="${TAG#v}"
+          MANIFEST=$(python3 -c "import json; print(json.load(open('custom_components/sunrise_soc_forecast/manifest.json'))['version'])")
+          echo "tag=$TAG manifest=$MANIFEST"
+          test "$TAG" = "$MANIFEST"
+
+      - name: Zip the integration
+        run: |
+          cd custom_components/sunrise_soc_forecast
+          rm -rf __pycache__ translations/__pycache__
+          zip -r -X "${GITHUB_WORKSPACE}/sunrise_soc_forecast.zip" . -x '*.pyc' -x '__pycache__/*'
+          cd "${GITHUB_WORKSPACE}"
+          unzip -l sunrise_soc_forecast.zip
+          unzip -p sunrise_soc_forecast.zip manifest.json | python3 -c "import json,sys; print('zip manifest version:', json.load(sys.stdin)['version'])"
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sunrise_soc_forecast.zip

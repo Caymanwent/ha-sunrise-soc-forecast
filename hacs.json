@@ -1,4 +1,6 @@
 {
   "name": "Sunrise SoC Forecast",
-  "homeassistant": "2024.12.0"
+  "homeassistant": "2024.12.0",
+  "zip_release": true,
+  "filename": "sunrise_soc_forecast.zip"
 }
