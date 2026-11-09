@@ -8,7 +8,7 @@ It works with any inverter or battery that exposes a SoC sensor and a house-load
 
 Every day, this integration answers one question: **what will my battery be at when the sun comes up?** — and its companion: **when will the batteries be full?**
 
-It runs a simulation forward from your battery's current state: the solar forecast goes in, your own measured consumption comes out, and a backup battery and dump loads are modelled if you have them. For each of the next 7 sunrises it reports the SoC, the grid import needed to hold your target, and the time the main (and backup) battery reach 100 %. From Day 2 on, each day also reports the lowest point after the sunrise it starts from, before solar picks up — so tomorrow morning's low is on Day 2.
+It runs a simulation forward from your battery's current state: the solar forecast goes in, your own measured consumption comes out, and a backup battery and dump loads are modelled if you have them. For each of the next 7 sunrises it reports the SoC, the grid import needed to hold your target, and the time the main (and backup) battery reach 100 %. From Day 2 on, each day also reports the lowest point anywhere in its run — the dip after its sunrise or, more often, the end of the following night — which is what a "forecast low" automation should watch.
 
 ### Example Dashboard
 
@@ -89,7 +89,7 @@ Set a target sunrise SoC and each day reports `grid_needed_kwh`: how far short o
 **Forecast**
 - Sunrise SoC for 2-7 days ahead, each day one continuous simulation at 15-minute, 30-minute or hourly steps to match the solar data
 - Day 1 from the live SoC, recalculated on every sensor update
-- Morning low and floor-hit time for Days 2-7 — each day's low is the dip after the sunrise it starts from, so tomorrow morning's is on Day 2
+- Lowest point and floor-hit time for Days 2-7 — the minimum anywhere in that day's run, the morning dip or (more often) the end of the following night, so on most days it equals the next sunrise SoC
 - Predicted time the main battery, the backup battery and both will be full — per day, and as a timestamp sensor
 
 **Solar**
@@ -278,8 +278,8 @@ After setup, the integration creates these sensors:
 | `grid_needed_kwh` | Grid import needed to reach target SoC (kWh) |
 | `grid_used_today_kwh` | Grid import accumulated today (kWh) — today's total, repeated on every day's sensor |
 | `target_soc` | Configured target SoC (%) |
-| `morning_low_kwh` | Predicted lowest battery level before solar ramps up (kWh) — Days 2-7 |
-| `morning_low_pct` | Same as percentage — Days 2-7 |
+| `morning_low_kwh` | Lowest battery level anywhere in that day's simulation (kWh) — the morning dip after its sunrise or, more often, the end of the following night, in which case it equals the next day's `predicted_kwh` — Days 2-7 |
+| `morning_low_pct` | Same as percentage — Days 2-7. This is the number the load-shedding threshold and typical "forecast low" automations compare against |
 | `floor_hour` | Time (HH:MM) the battery is predicted to hit its discharge floor during that day — Days 2-7, only present when it does |
 | `main_full` | Whether the main battery is predicted to reach 100 % during that day's daylight |
 | `main_full_hour` | Predicted time it gets there (HH:MM, local) — only present when `main_full` is true. On Day 1 a battery that is already full shows the time it was first seen full |
@@ -397,7 +397,7 @@ One row per forecast day. Day 1 is labelled **Tomorrow**, or **This Morning** be
 |--------|---------------|
 | Status | 🟢 sunrise SoC 15 % or above, 🟡 5-15 %, 🔴 below 5 % |
 | SoC % / kWh | Predicted sunrise SoC and kWh |
-| Day Low | The *next* morning's `morning_low_pct` — the lowest point before solar picks up (— on the last day) |
+| Day Low | The next day's `morning_low_pct` — the lowest point in that day's run, morning dip or end of the following night (— on the last day) |
 | Floor | Time the battery is predicted to hit its discharge floor that day (`floor_hour`), or — |
 | Solcast | Day 1: solar still expected today (`remaining_solar_kwh`); Days 2-7: the day's forecast total (kWh). The same column serves Open-Meteo |
 | Daytime | Daytime consumption estimate (kWh) |
