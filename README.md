@@ -133,18 +133,17 @@ Set a target sunrise SoC and each day reports `grid_needed_kwh`: how far short o
 
 [![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Caymanwent&repository=ha-sunrise-soc-forecast&category=integration)
 
-1. Go to **Settings → Marketplace** and select **Add from link** (upper right)
-2. Enter `Caymanwent/ha-sunrise-soc-forecast`, type **Integration**, and select **Add** — the first custom repository asks you to connect a GitHub account (read-only, device sign-in)
-3. Open the repository page and select **Install** — the setup flow opens straight away, no restart needed
-4. Updates appear under **Settings → System → Updates**; pre-releases are offered only if you enable and turn on the repository's **Pre-release** switch
+1. Go to **Settings → Marketplace** and search for **Sunrise SoC Forecast** (or open it with the badge above). The integration is in the catalog, so no GitHub account is needed
+2. Open the repository page and select **Install** — the setup flow opens straight away, no restart needed
+3. Updates appear under **Settings → System → Updates** (the catalog is checked every few hours); restart Home Assistant after installing an update. Pre-releases are offered only if you enable and turn on the repository's **Pre-release** switch
+
+**Add from link** (upper right) with `Caymanwent/ha-sunrise-soc-forecast` also works, but that route asks you to connect a GitHub account and checks for updates less often — the catalog route is the better one.
 
 ### HACS (Home Assistant 2026.10 and older)
 
-1. Open HACS in Home Assistant
-2. Click the three-dot menu → **Custom repositories**
-3. Add the repository URL, category: **Integration**
-4. Search for "Sunrise SoC Forecast" and download
-5. Restart Home Assistant
+1. Open HACS → **Integrations** and search for **Sunrise SoC Forecast** (it is in the default catalog; no custom repository needed)
+2. Download it
+3. Restart Home Assistant
 
 ### Manual
 
@@ -180,7 +179,7 @@ Tick **Enable backup battery** if you have a secondary battery that assists the 
 | Backup capacity (kWh) | Total capacity | `16` |
 | Minimum discharge floor (%) | Lowest SoC the backup discharges to | `5` |
 | Fixed discharge rate for forecast (kW) | Rate the backup is modelled to discharge at while assisting | `6.0` |
-| Hour backup starts discharging (0-6) | Relief runs from this hour to sunrise | `2` |
+| Hour backup starts discharging (0-6) | Relief runs from this hour to sunrise — keep it earlier than your earliest sunrise hour (an hour at or after sunrise gives no relief) | `2` |
 | Deployment mode | See below | Always discharge nightly |
 | Charge efficiency (%) | Applied to surplus going into the backup (50-100) | `92` |
 | Discharge efficiency (%) | Applied to backup energy relieving the main (50-100) | `98` |
@@ -265,7 +264,7 @@ After setup, the integration creates these sensors:
 | `sensor.predicted_sunrise_soc_day_2` through `day_7` | Days 2-7 predictions |
 | `sensor.7_day_average_daily_consumption` | Rolling 7-day daily consumption average (kWh) |
 | `sensor.7_day_average_overnight_consumption` | Rolling 7-day overnight consumption average (kWh) |
-| `sensor.predicted_batteries_full` | Next predicted moment both the main and the backup battery are full (timestamp). Day 1 is simulated from now, so if today will not get there (cloudy, or it is already evening) it falls through to the first later day that does; `unknown` when no day in the forecast does. Attributes: `day`, `date`, `main_full_at`, `backup_full_at`, `detail`. Once both batteries really are full it holds the time they got there until the main drops below full again |
+| `sensor.predicted_batteries_full` | Next predicted moment both the main and the backup battery are full (timestamp). Day 1 is simulated from now, so if today will not get there (cloudy, or it is already evening) it falls through to the first later day that does; `unknown` when no day in the forecast does. Attributes: `day`, `date`, `main_full_at`, `backup_full_at`, `detail`. Once both batteries really are full it holds the time they got there until either battery drops below full again |
 
 ### Sensor Attributes (All Days)
 
@@ -278,7 +277,7 @@ After setup, the integration creates these sensors:
 | `grid_needed_kwh` | Grid import needed to reach target SoC (kWh) |
 | `grid_used_today_kwh` | Grid import accumulated today (kWh) — today's total, repeated on every day's sensor |
 | `target_soc` | Configured target SoC (%) |
-| `morning_low_kwh` | Lowest battery level anywhere in that day's simulation (kWh) — the morning dip after its sunrise or, more often, the end of the following night, in which case it equals the next day's `predicted_kwh` — Days 2-7 |
+| `morning_low_kwh` | Lowest battery level anywhere in that day's simulation (kWh) — the dip after the sunrise the run starts from or, more often, the end of the following night, in which case it equals the sensor's own `predicted_kwh` — Days 2-7 |
 | `morning_low_pct` | Same as percentage — Days 2-7. This is the number the load-shedding threshold and typical "forecast low" automations compare against |
 | `floor_hour` | Time (HH:MM) the battery is predicted to hit its discharge floor during that day — Days 2-7, only present when it does |
 | `main_full` | Whether the main battery is predicted to reach 100 % during that day's daylight |
@@ -475,12 +474,12 @@ automation:
 
 ## Upgrading
 
-Updating keeps your settings, consumption history and the overnight snapshot; nothing needs reconfiguring. Marketplace installs update from **Settings → System → Updates**; HACS and manual installs need a restart once the files are replaced. Options added by an update start at their defaults until you change them under **Configure**.
+Updating keeps your settings, consumption history and the overnight snapshot; nothing needs reconfiguring. Marketplace installs update from **Settings → System → Updates**; restart Home Assistant afterwards (a repair under **Settings → System → Repairs** reminds you). HACS and manual installs need the same restart once the files are replaced. Options added by an update start at their defaults until you change them under **Configure**.
 
 ### Coming from 2.x or a 3.x beta
 
 - Nothing to reconfigure. Existing entries keep their entities and history.
-- 3.4 adds `sensor.predicted_batteries_full` and the `main_full*` / `backup_full*` / `both_full_hour` attributes; the new sensor appears as soon as the updated integration loads.
+- 3.4 adds `sensor.predicted_batteries_full` and the `main_full*` / `backup_full*` / `both_full_hour` attributes; the new sensor appears after the restart that finishes the update.
 - If you still use the 2.x dashboard card, replace it with the current `dashboard.yaml` — it reads attributes the old card did not know about.
 - To follow betas, turn on the repository's **Pre-release** switch in the Marketplace; leave it off to get stable releases only.
 
